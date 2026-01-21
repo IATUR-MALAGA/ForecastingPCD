@@ -1,0 +1,41 @@
+{
+  "NombreTabla": "pasajeros_aeropuerto",
+  "Ejemplos": [
+    {
+      "Nombre aeropuerto": "Aeropuerto de Málaga-Costa del Sol",
+      "Mes": 1,
+      "Año": 2025,
+      "Numero de pasajeros": 1852340
+    },
+    {
+      "Nombre aeropuerto": "Aeropuerto de Málaga-Costa del Sol",
+      "Mes": 2,
+      "Año": 2025,
+      "Numero de pasajeros": 1710895
+    },
+    {
+      "Nombre aeropuerto": "Aeropuerto Adolfo Suárez Madrid-Barajas",
+      "Mes": 3,
+      "Año": 2025,
+      "Numero de pasajeros": 50124560
+    },
+    {
+      "Nombre aeropuerto": "Aeropuerto Josep Tarradellas Barcelona-El Prat",
+      "Mes": 4,
+      "Año": 2025,
+      "Numero de pasajeros": 37654010
+    },
+    {
+      "Nombre aeropuerto": "Aeropuerto de Palma de Mallorca",
+      "Mes": 5,
+      "Año": 2025,
+      "Numero de pasajeros": 4623500
+    },
+    {
+      "Nombre aeropuerto": "Aeropuerto de Sevilla",
+      "Mes": 6,
+      "Año": 2025,
+      "Numero de pasajeros": 987450
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "NombreTabla": "turistas_municipio",
+  "Ejemplos": [
+    {
+      "Nombre municipio": "Málaga",
+      "Mes": 1,
+      "Año": 2025,
+      "Numero de turistas": 245300
+    },
+    {
+      "Nombre municipio": "Málaga",
+      "Mes": 2,
+      "Año": 2025,
+      "Numero de turistas": 231120
+    },
+    {
+      "Nombre municipio": "Marbella",
+      "Mes": 3,
+      "Año": 2025,
+      "Numero de turistas": 410850
+    },
+    {
+      "Nombre municipio": "Torremolinos",
+      "Mes": 4,
+      "Año": 2025,
+      "Numero de turistas": 198740
+    },
+    {
+      "Nombre municipio": "Benalmádena",
+      "Mes": 5,
+      "Año": 2025,
+      "Numero de turistas": 165930
+    },
+    {
+      "Nombre municipio": "Ronda",
+      "Mes": 6,
+      "Año": 2025,
+      "Numero de turistas": 58210
+    }
+  ]
+}
