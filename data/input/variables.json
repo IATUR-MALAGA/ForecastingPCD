@@ -8,8 +8,7 @@
       "Temporalidad": "Mensual",
       "Granularidad": "Aeropuerto",
       "Fuente": "Por definir",
-      "Unidad de medida": "Pasajeros",
-      "Indicador": "No"
+      "Unidad de medida": "Pasajeros"
     },
     {
       "NombreTabla": "turistas_municipio",
@@ -19,8 +18,7 @@
       "Temporalidad": "Mensual",
       "Granularidad": "Municipio",
       "Fuente": "Por definir",
-      "Unidad de medida": "Turistas",
-      "Indicador": "Si"
+      "Unidad de medida": "Turistas"
     }
   ]
 }

@@ -32,22 +32,6 @@ def read_json(source: Union[str, bytes], is_file: bool = True) -> Dict[str, Any]
     return data
 
 
-def get_indicator_yes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Returns a list (array) of variables whose field 'Indicador' equals 'Si' (case-insensitive).
-
-    Expected JSON shape:
-      {"variables": [ { ... "Indicador": "Si" ... }, ... ]}
-    """
-    variables = data.get("variables", [])
-    if not isinstance(variables, list):
-        raise ValueError('Expected "variables" to be a list.')
-
-    return [
-        v for v in variables
-        if isinstance(v, dict) and str(v.get("Indicador", "")).strip().lower() == "si"
-    ]
-
 
 def get_all_variables(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -61,34 +45,6 @@ def get_all_variables(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         raise ValueError('Expected "variables" to be a list.')
     return variables
 
-
-def get_indicator_yes_table_and_name(data: Dict[str, Any]) -> List[Tuple[str, str]]:
-    """
-    Returns a list of (NombreTabla, Nombre) tuples for variables whose 'Indicador' == 'Si'
-    (case-insensitive).
-
-    Expected JSON shape:
-      {"variables": [ { ... "Indicador": "Si", "NombreTabla": "...", "Nombre": "..." ... }, ... ]}
-    """
-    variables = data.get("variables", [])
-    if not isinstance(variables, list):
-        raise ValueError('Expected "variables" to be a list.')
-
-    results: List[Tuple[str, str]] = []
-    for v in variables:
-        if not isinstance(v, dict):
-            continue
-
-        if str(v.get("Indicador", "")).strip().lower() != "si":
-            continue
-
-        table = str(v.get("NombreTabla", "")).strip()
-        name = str(v.get("Nombre", "")).strip()
-
-        if table and name:
-            results.append((table, name))
-
-    return results
 
 def get_all_variables_table_and_name(data: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
@@ -114,7 +70,6 @@ def get_all_variables_table_and_name(data: Dict[str, Any]) -> List[Tuple[str, st
 
     return results
 
-def get
 
 
 
