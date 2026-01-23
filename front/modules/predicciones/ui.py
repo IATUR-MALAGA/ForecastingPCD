@@ -1,6 +1,5 @@
 from shiny import ui, module
 
-from back.data_management import buscar_nombre_equivalente
 
 @module.ui
 def predicciones_ui():
@@ -10,16 +9,16 @@ def predicciones_ui():
         
         # Wizard Container
         ui.div(
-            # Step 1: Datos
+            # Step 1: Select Indicator
             ui.output_ui("step_panel_1"),
             
-            # Step 2: Variables
+            # Step 2: Select Variables
             ui.output_ui("step_panel_2"),
             
-            # Step 3: Modelo
+            # Step 3: Config Variables
             ui.output_ui("step_panel_3"),
             
-            # Step 4: Resultados
+            # Step 4: Play with Model and Variables
             ui.output_ui("step_panel_4"),
             
             class_="wizard-container"
