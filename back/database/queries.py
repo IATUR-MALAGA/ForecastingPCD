@@ -19,3 +19,7 @@ GET_CATALOG_NAMES = """
     FROM "IA".tbl_catalogo_variables
     ORDER BY nombre_tabla, nombre;
 """
+GET_DATA_IN_TABLE = """
+    SELECT *
+    FROM "{schema}"."{table}"; 
+"""
