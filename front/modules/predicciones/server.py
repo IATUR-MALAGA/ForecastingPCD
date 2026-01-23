@@ -1,5 +1,7 @@
 from shiny import ui, render, module, reactive
 
+from back.database.repository import get_names_in_table_catalog
+
 @module.server
 def predicciones_server(input, output, session):
 
@@ -14,13 +16,24 @@ def predicciones_server(input, output, session):
     def step_panel_1():
         if current_step.get() != 1:
             return ui.div()
+        catalog_entries = get_names_in_table_catalog()
+        catalog_names = [entry.get("Nombre") for entry in catalog_entries if entry.get("Nombre")]
         return ui.div(
             ui.div(
                 ui.h2("📊 Paso 1: Seleccionar Datos", class_="step-panel-title"),
                 ui.p("Seleccione la variable que desea predecir.", class_="step-panel-description"),
                 class_="step-panel-header"
             ),
-            
+            ui.div(
+                ui.h3("Variables disponibles", class_="step-panel-subtitle"),
+                ui.tags.ul(
+                    [ui.tags.li(name) for name in catalog_names]
+                    if catalog_names
+                    else ui.tags.li("No se encontraron variables disponibles."),
+                    class_="step-panel-list",
+                ),
+                class_="step-panel-content",
+            ),
             ui.div(
                 ui.div(),  # Empty left side
                 ui.input_action_button("btn_next_1", "Siguiente →", class_="btn-step-next"),
