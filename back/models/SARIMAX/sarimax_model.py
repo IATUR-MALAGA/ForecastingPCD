@@ -1,5 +1,4 @@
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-from back.data_management import laggify_df
 from pmdarima import auto_arima
 
 def create_sarimax_model(train, exog_cols, column_y='turistas',
@@ -44,8 +43,7 @@ def best_sarimax_params(
     exog_cols,
     column_y='turistas',
     s=12,
-    periodos_a_predecir=2,
-    max_lag=0
+    periodos_a_predecir=2
 ):
     p_values=[0, 2]
     d_values=[0, 2]
