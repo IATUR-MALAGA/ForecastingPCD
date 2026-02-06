@@ -1,8 +1,8 @@
 import pandas as pd
 from shiny import ui, reactive, render, module
-from front.utils.back_api import sarimax_run
+from front.utils.back_api_wrappers import sarimax_run
 
-from front.utils.back_api import (
+from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
     get_tableName_for_variable,
 )
@@ -11,7 +11,7 @@ from front.utils.back_api import (
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model, predict_sarimax
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 from back.models.SARIMAX.sarimax_graph import plot_predictions
-from front.modules.predicciones.utils import (
+from front.utils.utils import (
     slug as _slug,  
     stable_id as _stable_id,
     group_by_category as _group_by_category,
@@ -31,8 +31,8 @@ def predicciones_server(input, output, session):
 
     current_step = reactive.Value(1)
 
-    target_var_rv = reactive.Value(None)      # Panel 1 (selección única)
-    predictors_rv = reactive.Value([])        # Panel 2 (selección múltiple)
+    target_var_rv = reactive.Value(None)      
+    predictors_rv = reactive.Value([])        
 
     catalog_entries = get_names_in_table_catalog() or []
     name_to_table = build_name_to_table(catalog_entries)
@@ -281,19 +281,17 @@ def predicciones_server(input, output, session):
             pretty = item["pretty"]
             table = item["table"]
 
-            filtros = cache.get_filters(table)  # mismos filtros que renderizas en Panel 3
+            filtros = cache.get_filters(table)  
             selected_list: list[dict] = []
 
             for f in filtros:
                 t = f["table"]
                 col = f["col"]
 
-                # OJO: tiene que ser EXACTAMENTE el mismo input_id que usas en Panel 3
                 input_id = _stable_id("flt", f"{t}__{col}")
 
                 vals = input[input_id]() if (input_id in input) else None
 
-                # selectize multiple suele devolver lista/tupla; vacío => []/None
                 if vals:
                     selected_list.append({
                         "table": t,
@@ -323,10 +321,9 @@ def predicciones_server(input, output, session):
         panels = []
 
         for item in vars_sel:
-            pretty = item["pretty"]   # <- nombre bonito (UI)
-            table = item["table"]     # <- nombre real (queries)
+            pretty = item["pretty"]   
+            table = item["table"]    
 
-            # IMPORTANTE: pides filtros usando el nombre REAL de tabla
             filtros = cache.get_filters(table)
 
             if not filtros:
@@ -336,7 +333,7 @@ def predicciones_server(input, output, session):
                 for f in filtros:
                     t = f["table"]
                     col = f["col"]
-                    label = f.get("label") or col  # <-- NUEVO
+                    label = f.get("label") or col  
 
 
                     cols_set = cache.get_table_cols("IA", t)
@@ -353,7 +350,6 @@ def predicciones_server(input, output, session):
                         )
                         continue
 
-                    # ID estable: usa la TABLA REAL + columna (evitas colisiones y es consistente)
                     input_id = _stable_id("flt", f"{t}__{col}")
 
                     choices = cache.get_distinct("IA", t, col)
@@ -376,8 +372,6 @@ def predicciones_server(input, output, session):
 
                 body = ui.div(*controls)
 
-            # Acordeón: muestra NOMBRE BONITO
-            # value: usa algo estable y único (tabla real suele ser mejor que pretty)
             panels.append(
                 ui.accordion_panel(
                     pretty,
@@ -409,21 +403,18 @@ def predicciones_server(input, output, session):
 
     @reactive.calc
     def exog_choices():
-        # Exógenas disponibles = las predictoras seleccionadas en panel 2
         return list(predictors_rv.get() or [])
 
     @reactive.calc
     def exog_selected():
         choices = exog_choices()
 
-        # Si el input aún no existe, por defecto usamos todas
         if "sarimax_exogs" not in input:
             return choices
 
         sel = input.sarimax_exogs() or []
         sel = list(sel)
 
-        # Limpiar por si cambian las choices
         sel = [s for s in sel if s in choices]
         return sel
 
@@ -433,15 +424,14 @@ def predicciones_server(input, output, session):
         if current_step.get() != 4:
             return None
 
-        # <- aquí usamos el selector del panel 4
         predictors_used = exog_selected()
 
         payload = {
             "target_var": target_var_rv.get(),
-            "predictors": predictors_used,                    # 👈 SOLO las activadas
+            "predictors": predictors_used,                    
             "filters_by_var": selected_filters_by_var(),
             "train_ratio": 0.70,
-            "auto_params": True,    # OJO: puede ser lento
+            "auto_params": True,    
             "s": 12,
             "return_df": True
         }
@@ -460,9 +450,9 @@ def predicciones_server(input, output, session):
         test = df.iloc[n_train:n_train + n_test]
 
         pred_vals = resp["y_pred"]
-        pred_test = pd.Series(pred_vals, index=range(len(train), len(train) + len(test)))
+        pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
 
-        fig_or_ax = plot_predictions(
+        fig = plot_predictions(
             df=df,
             pred=pred_test,
             title="Predicciones SARIMAX",
@@ -472,7 +462,6 @@ def predicciones_server(input, output, session):
             periodos_a_predecir=n_test,
             holidays_col=None
         )
-        fig = fig_or_ax.figure if hasattr(fig_or_ax, "figure") else fig_or_ax
 
         return {
             "mape": resp["mape"],
@@ -481,7 +470,7 @@ def predicciones_server(input, output, session):
             "fig": fig,
             "order": resp["order"],
             "seasonal_order": resp["seasonal_order"],
-            "predictors_used": predictors_used,              # 👈 para mostrarlo en UI
+            "predictors_used": predictors_used,
         }
 
 
@@ -491,7 +480,6 @@ def predicciones_server(input, output, session):
         if current_step.get() != 4:
             return ui.div()
 
-        # choices del checkbox
         choices = exog_choices()
         selected = exog_selected()
 
@@ -521,7 +509,7 @@ def predicciones_server(input, output, session):
                 "sarimax_exogs",
                 "Variables exógenas (activar/desactivar)",
                 choices=choices,
-                selected=selected,   # mantiene selección estable
+                selected=selected,  
             ),
 
             ui.tags.div(

@@ -6,8 +6,8 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from front.modules.predicciones.utils import create_dataframe_based_on_selection
-from front.modules.predicciones.utils import _safe_alias
+from front.utils.utils import create_dataframe_based_on_selection
+from front.utils.utils import _safe_alias
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 
@@ -26,18 +26,14 @@ class SarimaxRunRequest(BaseModel):
     predictors: list[str] = Field(default_factory=list)
     filters_by_var: Optional[dict[str, list[FilterSelection]]] = None
 
-    # split como en tu Shiny
     train_ratio: float = Field(0.70, gt=0.0, lt=1.0)
 
-    # SARIMAX params
     auto_params: bool = True
     s: int = 12
 
-    # por si quieres forzar parámetros (si auto_params=False)
     order: Optional[tuple[int, int, int]] = None
     seasonal_order: Optional[tuple[int, int, int, int]] = None
 
-    # si quieres devolver df para plot en Shiny
     return_df: bool = True
 
 
@@ -58,7 +54,6 @@ class SarimaxRunResponse(BaseModel):
 
     y_pred: list[float]
 
-    # opcional para que Shiny pueda recrear el plot con tu plot_predictions
     df: Optional[list[dict[str, Any]]] = None
 
 
@@ -76,7 +71,6 @@ def sarimax_run(req: SarimaxRunRequest):
         if df is None or len(df) == 0:
             raise HTTPException(status_code=422, detail="El dataframe resultante está vacío")
 
-        # nombres de columnas como en tu Shiny
         exog_cols = [_safe_alias(c) for c in (req.predictors or [])]
         y_col = _safe_alias(req.target_var)
 
@@ -95,7 +89,6 @@ def sarimax_run(req: SarimaxRunRequest):
 
         exog_test = test[exog_cols] if exog_cols else None
 
-        # parámetros
         if req.auto_params:
             order, seas = best_sarimax_params(
                 df=df,
