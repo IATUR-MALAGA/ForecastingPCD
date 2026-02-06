@@ -1,18 +1,10 @@
-import re
-import hashlib
-from collections import OrderedDict
 import pandas as pd
 from shiny import ui, reactive, render, module
 from front.utils.back_api import sarimax_run
 
 from front.utils.back_api import (
     get_names_in_table_catalog,
-    get_metadata_for_variable,
-    get_date_range_for_variable, 
-    get_filters_for_variable,
-    get_distinct_values_for_column,
-    get_table_columns,
-    get_tableName_for_variable
+    get_tableName_for_variable,
 )
 
 
@@ -20,13 +12,14 @@ from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarima
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 from back.models.SARIMAX.sarimax_graph import plot_predictions
 from front.modules.predicciones.utils import (
-    _safe_alias,
-    check_date_and_temporality,
-    create_dataframe_based_on_selection,
     slug as _slug,  
     stable_id as _stable_id,
     group_by_category as _group_by_category,
-    fmt as _fmt
+    fmt as _fmt,
+    build_name_to_table,
+    PrediccionesCache,
+    compatibilidad_con_objetivo,
+    panel_styles,
 )
 
 
@@ -42,243 +35,9 @@ def predicciones_server(input, output, session):
     predictors_rv = reactive.Value([])        # Panel 2 (selección múltiple)
 
     catalog_entries = get_names_in_table_catalog() or []
-    # Mapa nombre(variable)->tabla (por si en catálogo viene nombre_tabla)
-    _name_to_table: dict[str, str] = {}
-    for e in (catalog_entries or []):
-        n = e.get("nombre")
-        if not n:
-            continue
-        _name_to_table[n] = e.get("nombre_tabla") or n
-
-    # Cache de rango de fechas por tabla (por sesión)
-    _date_range_cache: dict[str, tuple[object | None, object | None]] = {}
-
-    def _get_date_range(nombre_var: str):
-        table = _name_to_table.get(nombre_var, nombre_var)
-        if table in _date_range_cache:
-            return _date_range_cache[table]
-
-        try:
-            rows = get_date_range_for_variable(table) or []
-            row = rows[0] if rows else {}
-            start = row.get("fecha_inicio")
-            end = row.get("fecha_fin")
-        except Exception:
-            start, end = None, None
-
-        _date_range_cache[table] = (start, end)
-        return start, end
-
-
-    def _compatibilidad_con_objetivo(
-        predictor_name: str,
-        predictor_meta: dict,
-        target_name: str,
-        target_meta: dict,
-        target_start,
-        target_end,
-    ) -> tuple[bool, str]:
-        """
-        Compatibilidad predictor vs objetivo usando:
-        - misma temporalidad
-        - y que el predictor CUBRA el rango del objetivo
-          (esto se logra pasando predictor como "1" y objetivo como "2"
-           porque check_date_and_temporality comprueba que 2 está contenido en 1).
-        """
-        if not target_name:
-            return False, "Sin objetivo seleccionado"
-
-        pred_temp = predictor_meta.get("temporalidad")
-        tgt_temp = target_meta.get("temporalidad")
-
-        pred_start, pred_end = _get_date_range(predictor_name)
-
-        if pred_temp is None or tgt_temp is None:
-            return False, "Temporalidad no definida"
-
-        if pred_start is None or pred_end is None or target_start is None or target_end is None:
-            return False, "Sin rango de fechas"
-
-        ok = check_date_and_temporality(
-            pred_start, target_start,
-            pred_end,   target_end,
-            pred_temp,  tgt_temp
-        )
-
-        if ok:
-            return True, ""
-        # Si falla, puede ser temporalidad distinta o rango insuficiente;
-        # temporalidad distinta ya la capturó check_date_and_temporality, pero damos motivo más claro:
-        if pred_temp.strip().lower() != tgt_temp.strip().lower():
-            return False, "Temporalidad distinta"
-        return False, "El predictor no cubre el rango del objetivo"
-
-    # Cache de metadata por variable (por sesión)
-    _metadata_cache: dict[str, dict] = {}
-
-    def _get_meta(nombre: str) -> dict:
-        if nombre in _metadata_cache:
-            return _metadata_cache[nombre]
-        rows = get_metadata_for_variable(nombre) or []
-        meta = rows[0] if rows else {}
-        _metadata_cache[nombre] = meta
-        return meta
-    
-        # Cache filtros por variable (por sesión)
-    _filters_cache: dict[str, list[dict]] = {}
-
-    # Cache DISTINCT values por (tabla, columna)
-    _distinct_cache: dict[tuple[str, str], list[str]] = {}
-
-    # Cache columnas por tabla (para validar que existan)
-    _table_cols_cache: dict[str, set[str]] = {}
-
-    def _get_table_cols(schema: str, table: str) -> set[str]:
-        key = f"{schema}.{table}"
-        if key in _table_cols_cache:
-            return _table_cols_cache[key]
-        cols = get_table_columns(schema, table) or []
-        s = {c.get("column_name") for c in cols if c.get("column_name")}
-        _table_cols_cache[key] = s
-        return s
-
-    def _get_filters(nombre_var: str) -> list[dict]:
-        if nombre_var in _filters_cache:
-            return _filters_cache[nombre_var]
-
-        rows = get_filters_for_variable(nombre_var) or []
-        out: list[dict] = []
-
-        default_table = _name_to_table.get(nombre_var, nombre_var)
-
-        for r in rows:
-            table = r.get("nombre_tabla") or default_table
-            col = r.get("filtro")  # nombre real columna
-            if not col:
-                continue
-
-            label = r.get("nombre_filtro") or col  # nombre bonito (fallback a col)
-            out.append({"table": table, "col": col, "label": label})
-
-        # dedup conservando orden (por tabla+col)
-        seen = set()
-        uniq = []
-        for item in out:
-            k = (item["table"], item["col"])
-            if k in seen:
-                continue
-            seen.add(k)
-            uniq.append(item)
-
-        _filters_cache[nombre_var] = uniq
-        return uniq
-
-
-
-    def _get_distinct(schema: str, table: str, col: str) -> list[str]:
-        key = (table, col)
-        if key in _distinct_cache:
-            return _distinct_cache[key]
-        vals = get_distinct_values_for_column(schema, table, col) or []
-        _distinct_cache[key] = vals
-        return vals
-
-
-    PANEL_STYLES = ui.tags.style(
-        """
-        .var-list {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            padding: 6px 0;
-        }
-
-        /* Botón base */
-        .var-pick {
-            text-align: left;
-            width: 100%;
-            border: 1px solid #d0d7de;
-            border-radius: 6px;
-            padding: 8px 10px;
-            background: #ffffff;
-            cursor: pointer;
-        }
-
-        .var-pick:hover { background: #f6f8fa; }
-
-        .var-pick.is-selected {
-            font-weight: 700;
-            background: #d1e7dd;
-            border-color: #198754;
-            color: #0f5132;
-        }
-
-        .selection-pill {
-            padding: 6px 10px;
-            border-radius: 999px;
-            display: inline-block;
-            background: #f6f8fa;
-            border: 1px solid #d0d7de;
-            margin-bottom: 8px;
-        }
-
-        /* Panel 2: tarjetas por variable */
-        .var-item {
-            border: 1px solid #d0d7de;
-            border-radius: 8px;
-            padding: 10px 12px;
-            background: #fff;
-            margin-bottom: 8px;
-        }
-
-        .var-item .form-check { margin: 0; }
-        .var-item .form-check-label { font-weight: 600; }
-
-        .var-meta {
-            margin-top: 6px;
-            padding-left: 24px; /* alinear con el checkbox */
-            font-size: 0.92rem;
-            color: #24292f;
-        }
-
-        .var-meta-grid {
-            display: grid;
-            grid-template-columns: 140px 1fr;
-            gap: 4px 10px;
-            margin-top: 4px;
-        }
-
-        .var-meta-key { color: #57606a; }
-        .var-desc {
-            margin-top: 6px;
-            color: #24292f;
-        }
-                .compat-badge {
-            padding: 2px 10px;
-            border-radius: 999px;
-            display: inline-block;
-            font-size: 0.85rem;
-            border: 1px solid;
-            font-weight: 600;
-        }
-        .compat-yes {
-            background: #d1e7dd;
-            border-color: #198754;
-            color: #0f5132;
-        }
-        .compat-no {
-            background: #f8d7da;
-            border-color: #dc3545;
-            color: #842029;
-        }
-        .compat-reason {
-            margin-top: 4px;
-            font-size: 0.85rem;
-            color: #57606a;
-        }
-
-        """
-    )
+    name_to_table = build_name_to_table(catalog_entries)
+    cache = PrediccionesCache(name_to_table)
+    PANEL_STYLES = panel_styles()
 
     ##########################################################################################
     # Panel 1: SELECCION DE VARIABLE OBJETIVO
@@ -373,8 +132,8 @@ def predicciones_server(input, output, session):
 
         target_var = target_var_rv.get()
         grouped = _group_by_category(catalog_entries, exclude_name=target_var)
-        target_meta = _get_meta(target_var) if target_var else {}
-        target_start, target_end = _get_date_range(target_var) if target_var else (None, None)
+        target_meta = cache.get_meta(target_var) if target_var else {}
+        target_start, target_end = cache.get_date_range(target_var) if target_var else (None, None)
         target_temp = _fmt(target_meta.get("temporalidad"))
         panels = []
         for cat, names in grouped.items():
@@ -382,14 +141,15 @@ def predicciones_server(input, output, session):
 
             for name in names:
                 var_id = _stable_id("pred", name)
-                meta = _get_meta(name)
-                compat, reason = _compatibilidad_con_objetivo(
+                meta = cache.get_meta(name)
+                compat, reason = compatibilidad_con_objetivo(
                     predictor_name=name,
                     predictor_meta=meta,
                     target_name=target_var,
                     target_meta=target_meta,
                     target_start=target_start,
                     target_end=target_end,
+                    cache=cache,
                 )
 
                 badge = ui.tags.span(
@@ -503,7 +263,7 @@ def predicciones_server(input, output, session):
 
         out: list[dict] = []
         for pretty in ordered_pretty:
-            table = _name_to_table.get(pretty)
+            table = name_to_table.get(pretty)
 
             if not table:
                 rows = get_tableName_for_variable(pretty) or []
@@ -521,7 +281,7 @@ def predicciones_server(input, output, session):
             pretty = item["pretty"]
             table = item["table"]
 
-            filtros = _get_filters(table)  # mismos filtros que renderizas en Panel 3
+            filtros = cache.get_filters(table)  # mismos filtros que renderizas en Panel 3
             selected_list: list[dict] = []
 
             for f in filtros:
@@ -567,7 +327,7 @@ def predicciones_server(input, output, session):
             table = item["table"]     # <- nombre real (queries)
 
             # IMPORTANTE: pides filtros usando el nombre REAL de tabla
-            filtros = _get_filters(table)
+            filtros = cache.get_filters(table)
 
             if not filtros:
                 body = ui.p("Sin filtros configurados en tbl_admin_filtros para esta variable/tabla.")
@@ -579,7 +339,7 @@ def predicciones_server(input, output, session):
                     label = f.get("label") or col  # <-- NUEVO
 
 
-                    cols_set = _get_table_cols("IA", t)
+                    cols_set = cache.get_table_cols("IA", t)
                     if col not in cols_set:
                         controls.append(
                             ui.tags.div(
@@ -596,7 +356,7 @@ def predicciones_server(input, output, session):
                     # ID estable: usa la TABLA REAL + columna (evitas colisiones y es consistente)
                     input_id = _stable_id("flt", f"{t}__{col}")
 
-                    choices = _get_distinct("IA", t, col)
+                    choices = cache.get_distinct("IA", t, col)
 
                     controls.append(
                         ui.tags.div(
@@ -748,8 +508,6 @@ def predicciones_server(input, output, session):
             return None
         return res["fig"]  
         
-
-
 
 
 
