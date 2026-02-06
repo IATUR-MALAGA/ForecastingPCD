@@ -4,7 +4,7 @@ from collections import OrderedDict
 import pandas as pd
 from shiny import ui, reactive, render, module
 
-from back.database.repository import (
+from front.utils.back_api import (
     get_names_in_table_catalog,
     get_metadata_for_variable,
     get_date_range_for_variable, 
@@ -14,15 +14,14 @@ from back.database.repository import (
     get_tableName_for_variable
 )
 
-from back.management.data_management import (
-    check_date_and_temporality,
-    create_dataframe_based_on_selection,
-    _safe_alias
-    )
+
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model, predict_sarimax
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 from back.models.SARIMAX.sarimax_graph import plot_predictions
 from front.modules.predicciones.utils import (
+    _safe_alias,
+    check_date_and_temporality,
+    create_dataframe_based_on_selection,
     slug as _slug,  
     stable_id as _stable_id,
     group_by_category as _group_by_category,

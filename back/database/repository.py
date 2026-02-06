@@ -1,39 +1,92 @@
-from typing import Any, Dict, List
-from .core import fetch_data
-from .queries import *
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Sequence
 from psycopg import sql
 
+from .core import fetch_data
+from .queries import (
+    GET_TABLES_IN_SCHEMA,
+    GET_COLUMNS_IN_TABLE,
+    GET_CATALOG_NAMES,
+    GET_CATEGORIES,
+    GET_METADATA_FOR_VARIABLE,
+    GET_DATE_RANGE_FOR_VARIABLE,
+    GET_FILTERS_FOR_VARIABLE,
+    GET_TABLE_NAME_FOR_VARIABLE,
+    GET_BOOL_GROUP_FILTERS,
+)
 
-def get_all_tables_in_schema(schema: str = "IA") -> List[str]:
-    return fetch_data(GET_TABLES_IN_SCHEMA, (schema,))
+
+# -------------------------
+# Helpers (internos)
+# -------------------------
+
+def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
+    """
+    Convierte rows a list[str].
+    Soporta filas como dict_row ({"table_name": ...}) o tuplas (("tbl",),).
+    """
+    out: list[str] = []
+    for r in rows or []:
+        if isinstance(r, dict):
+            v = r.get(key)
+        elif isinstance(r, (list, tuple)) and r:
+            v = r[0]
+        else:
+            v = r
+
+        if v is not None:
+            out.append(str(v))
+    return out
+
+
+# -------------------------
+# Catalog / metadata
+# -------------------------
+
+def get_all_tables_in_schema(schema: str = "IA") -> list[str]:
+    rows = fetch_data(GET_TABLES_IN_SCHEMA, (schema,)) or []
+    return _as_str_list(rows, key="table_name")
 
 def get_table_columns(schema: str, table: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_COLUMNS_IN_TABLE, (schema, table))
+    return fetch_data(GET_COLUMNS_IN_TABLE, (schema, table)) or []
 
 def get_names_in_table_catalog() -> List[Dict[str, Any]]:
-    return fetch_data(GET_CATALOG_NAMES)
-
-def get_all_data(schema: str, table: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_ALL_DATA_IN_TABLE)
+    return fetch_data(GET_CATALOG_NAMES) or []
 
 def get_categories_in_catalog() -> List[Dict[str, Any]]:
-    return fetch_data(GET_CATEGORIES)
+    return fetch_data(GET_CATEGORIES) or []
 
 def get_metadata_for_variable(nombre: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_METADATA_FOR_VARIABLE, (nombre,))
-
-def get_date_range_for_variable(nombre_tabla: str, schema: str = "IA") -> List[Dict[str, Any]]:
-    q = GET_DATE_RANGE_FOR_VARIABLE.format(
-        schema=sql.Identifier(schema),
-        nombre_tabla=sql.Identifier(nombre_tabla)
-    )
-    return fetch_data(q)
+    return fetch_data(GET_METADATA_FOR_VARIABLE, (nombre,)) or []
 
 def get_filters_for_variable(nombre: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_FILTERS_FOR_VARIABLE, (nombre, nombre))
+    return fetch_data(GET_FILTERS_FOR_VARIABLE, (nombre, nombre)) or []
+
+def get_tableName_for_variable(nombre: str) -> List[Dict[str, Any]]:
+    return fetch_data(GET_TABLE_NAME_FOR_VARIABLE, (nombre,)) or []
+
+def get_bool_group_filters(filtro: str) -> List[Dict[str, Any]]:
+    return fetch_data(GET_BOOL_GROUP_FILTERS, (filtro,)) or []
 
 
-def get_distinct_values_for_column(schema: str, table: str, column: str) -> List[str]:
+# -------------------------
+# Safe dynamic-table queries
+# -------------------------
+
+def get_date_range_for_variable(nombre_tabla: str, schema: str = "IA") -> List[Dict[str, Any]]:
+    try:
+        # GET_DATE_RANGE_FOR_VARIABLE ya es sql.SQL(...), así que .format con Identifiers es correcto y seguro.
+        q = GET_DATE_RANGE_FOR_VARIABLE.format(
+            schema=sql.Identifier(schema),
+            nombre_tabla=sql.Identifier(nombre_tabla),
+        )
+        return fetch_data(q) or []
+    except Exception as e:
+        print(f"Error in get_date_range_for_variable: {e}")
+        return []
+
+def get_distinct_values_for_column(schema: str, table: str, column: str) -> list[str]:
     q = sql.SQL("""
         SELECT DISTINCT {col}::text AS value
         FROM {schema}.{table}
@@ -46,14 +99,24 @@ def get_distinct_values_for_column(schema: str, table: str, column: str) -> List
     )
 
     rows = fetch_data(q) or []
-    return [r.get("value") for r in rows if r.get("value") is not None]
+    # rows suele venir como [{"value": "..."}]
+    return _as_str_list(rows, key="value")
 
-def get_tableName_for_variable(nombre: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_TABLE_NAME_FOR_VARIABLE, (nombre,))   
+def get_all_data(schema: str, table: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    """
+    ⚠️ Ojo: exponer esto como endpoint sin límites es peligroso.
+    Por eso obligamos a limit/offset y usamos Identifiers (safe).
+    """
+    q = sql.SQL("SELECT * FROM {}.{} LIMIT %s OFFSET %s").format(
+        sql.Identifier(schema),
+        sql.Identifier(table),
+    )
+    return fetch_data(q, (limit, offset)) or []
 
 
-from typing import Optional, Tuple
-from psycopg import sql
+# -------------------------
+# Series
+# -------------------------
 
 def get_monthly_series_with_filters(
     schema: str,
@@ -75,7 +138,6 @@ def get_monthly_series_with_filters(
     params: list[Any] = []
     clauses: list[sql.Composable] = []
 
-    # filtros: comparamos contra col::text, porque el selectize usa DISTINCT col::text
     for col, vals in filters.items():
         if not vals:
             continue
@@ -83,7 +145,7 @@ def get_monthly_series_with_filters(
         clauses.append(
             sql.SQL("{col}::text IN ({ph})").format(
                 col=sql.Identifier(col),
-                ph=ph
+                ph=ph,
             )
         )
         params.extend(vals)
@@ -147,7 +209,4 @@ def get_monthly_series_with_filters(
         agg=sql.SQL(agg_u),
     )
 
-    return fetch_data(q, tuple(params))
-
-def get_bool_group_filters(filtro: str) -> List[Dict[str, Any]]:
-    return fetch_data(GET_BOOL_GROUP_FILTERS, (filtro,))
+    return fetch_data(q, tuple(params)) or []

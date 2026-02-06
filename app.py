@@ -55,4 +55,4 @@ app = App(app_ui, server, static_assets=app_dir / "front" / "www")
 # Punto de entrada para ejecución
 if __name__ == "__main__":
     from shiny import run_app
-    run_app(app, port=8000)
+    run_app(app, port=8001)
