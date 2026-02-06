@@ -643,21 +643,45 @@ def predicciones_server(input, output, session):
 
 
 
-    ##########################################################################################
-    # Panel 4: Play with Model and Variables
-    ##########################################################################################
+##########################################################################################
+# Panel 4: Play with Model and Variables
+##########################################################################################
+
+    @reactive.calc
+    def exog_choices():
+        # Exógenas disponibles = las predictoras seleccionadas en panel 2
+        return list(predictors_rv.get() or [])
+
+    @reactive.calc
+    def exog_selected():
+        choices = exog_choices()
+
+        # Si el input aún no existe, por defecto usamos todas
+        if "sarimax_exogs" not in input:
+            return choices
+
+        sel = input.sarimax_exogs() or []
+        sel = list(sel)
+
+        # Limpiar por si cambian las choices
+        sel = [s for s in sel if s in choices]
+        return sel
+
 
     @reactive.calc
     def sarimax_results():
         if current_step.get() != 4:
             return None
 
+        # <- aquí usamos el selector del panel 4
+        predictors_used = exog_selected()
+
         payload = {
             "target_var": target_var_rv.get(),
-            "predictors": predictors_rv.get(),
-            "filters_by_var": selected_filters_by_var(),  # ya tiene table/col/values
+            "predictors": predictors_used,                    # 👈 SOLO las activadas
+            "filters_by_var": selected_filters_by_var(),
             "train_ratio": 0.70,
-            "auto_params": True,   # OJO: puede ser lento
+            "auto_params": True,    # OJO: puede ser lento
             "s": 12,
             "return_df": True
         }
@@ -675,7 +699,6 @@ def predicciones_server(input, output, session):
         train = df.iloc[:n_train]
         test = df.iloc[n_train:n_train + n_test]
 
-        # reconstruye pred_test como Series para reutilizar tu plot_predictions
         pred_vals = resp["y_pred"]
         pred_test = pd.Series(pred_vals, index=range(len(train), len(train) + len(test)))
 
@@ -698,6 +721,7 @@ def predicciones_server(input, output, session):
             "fig": fig,
             "order": resp["order"],
             "seasonal_order": resp["seasonal_order"],
+            "predictors_used": predictors_used,              # 👈 para mostrarlo en UI
         }
 
 
@@ -707,16 +731,44 @@ def predicciones_server(input, output, session):
         if current_step.get() != 4:
             return ui.div()
 
+        # choices del checkbox
+        choices = exog_choices()
+        selected = exog_selected()
+
         res = sarimax_results()
         if res is None:
-            return ui.div()
+            return ui.div(
+                PANEL_STYLES,
+                ui.h3("Panel 4: Resultados del modelo SARIMAX"),
+                ui.p("Configura las variables exógenas y se recalculará el modelo."),
+                ui.input_checkbox_group(
+                    "sarimax_exogs",
+                    "Variables exógenas (activar/desactivar)",
+                    choices=choices,
+                    selected=selected,
+                ),
+                ui.p("Aún no hay resultados (df vacío o error)."),
+            )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 4: Resultados del modelo SARIMAX"),
-            ui.p("Aquí se muestran los resultados del modelo SARIMAX ajustado con las variables seleccionadas."),
+            ui.h3("Panel 4: SARIMAX — activar/desactivar exógenas"),
+            ui.p("Marca qué variables exógenas quieres usar. Al cambiar, se recalcula el modelo."),
+
+            ui.input_checkbox_group(
+                "sarimax_exogs",
+                "Variables exógenas (activar/desactivar)",
+                choices=choices,
+                selected=selected,   # mantiene selección estable
+            ),
+
+            ui.tags.div(
+                ui.tags.span("Exógenas activas: ", style="font-weight:600; margin-right:6px;"),
+                ui.tags.span(", ".join(res["predictors_used"]) if res["predictors_used"] else "Ninguna"),
+                style="margin: 10px 0;",
+            ),
 
             ui.tags.div(
                 ui.tags.div(
@@ -746,8 +798,9 @@ def predicciones_server(input, output, session):
         res = sarimax_results()
         if res is None:
             return None
-        return res["fig"]  
-        
+        return res["fig"]
+
+            
 
 
 
