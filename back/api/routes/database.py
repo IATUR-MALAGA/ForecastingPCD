@@ -16,8 +16,6 @@ from back.database.repository import (
     get_bool_group_filters
 )
 
-# Si NO renombraste y sigue siendo router.py, usa esto:
-# from back.database.router import (...)
 
 router = APIRouter(prefix="/database", tags=["database"])
 

@@ -3,6 +3,7 @@ import hashlib
 from collections import OrderedDict
 import pandas as pd
 from shiny import ui, reactive, render, module
+from front.utils.back_api import sarimax_run
 
 from front.utils.back_api import (
     get_names_in_table_catalog,
@@ -648,60 +649,35 @@ def predicciones_server(input, output, session):
 
     @reactive.calc
     def sarimax_results():
-        # Si no estamos en el paso 4, no calculamos nada
         if current_step.get() != 4:
             return None
 
-        df = create_dataframe_based_on_selection(
-            target_var=target_var_rv.get(),
-            predictors=predictors_rv.get(),
-            filters_by_var=selected_filters_by_var()
-        )
+        payload = {
+            "target_var": target_var_rv.get(),
+            "predictors": predictors_rv.get(),
+            "filters_by_var": selected_filters_by_var(),  # ya tiene table/col/values
+            "train_ratio": 0.70,
+            "auto_params": True,   # OJO: puede ser lento
+            "s": 12,
+            "return_df": True
+        }
 
-        exog_cols = [_safe_alias(c) for c in predictors_rv.get()]
-        y_col = _safe_alias(target_var_rv.get())
+        resp = sarimax_run(payload)
 
-        n = len(df)
-        if n == 0:
+        df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+        if df is None or df.empty:
             return None
 
-        # Split 70% train, 30% test (como tienes ahora)
-        n_train = int(n * 0.70)
-        n_test  = n - n_train  # más robusto que int(n*0.30) por redondeos
+        y_col = resp["y_col"]
+        n_train = resp["n_train"]
+        n_test = resp["n_test"]
 
         train = df.iloc[:n_train]
-        test  = df.iloc[n_train:n_train + n_test]
+        test = df.iloc[n_train:n_train + n_test]
 
-        # Exog dataframes (o None si no hay exógenas)
-        exog_test = test[exog_cols] if exog_cols else None
-
-        order, seas = best_sarimax_params(
-            df=df,
-            exog_cols=exog_cols,
-            column_y=y_col,
-            s=12,
-            periodos_a_predecir=n_test
-        )
-
-        model_fit = create_sarimax_model(
-            train=train,
-            exog_cols=exog_cols,
-            column_y=y_col,
-            order=order,
-            seasonal_order=seas
-        )
-
-        pred_test = model_fit.predict(
-            start=len(train),
-            end=len(train) + len(test) - 1,
-            exog=exog_test
-        )
-
-        mape, rmse, mae = compute_metrics(
-            pred=pred_test,
-            df_test=test,
-            indicador=y_col
-        )
+        # reconstruye pred_test como Series para reutilizar tu plot_predictions
+        pred_vals = resp["y_pred"]
+        pred_test = pd.Series(pred_vals, index=range(len(train), len(train) + len(test)))
 
         fig_or_ax = plot_predictions(
             df=df,
@@ -713,15 +689,15 @@ def predicciones_server(input, output, session):
             periodos_a_predecir=n_test,
             holidays_col=None
         )
-
-        # Asegurar que devolvemos una Figure
         fig = fig_or_ax.figure if hasattr(fig_or_ax, "figure") else fig_or_ax
 
         return {
-            "mape": mape,
-            "rmse": rmse,
-            "mae": mae,
+            "mape": resp["mape"],
+            "rmse": resp["rmse"],
+            "mae": resp["mae"],
             "fig": fig,
+            "order": resp["order"],
+            "seasonal_order": resp["seasonal_order"],
         }
 
 

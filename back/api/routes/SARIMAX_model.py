@@ -6,11 +6,12 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from front.modules.predicciones import create_dataframe_based_on_selection, _safe_alias
+from front.modules.predicciones.utils import create_dataframe_based_on_selection
+from front.modules.predicciones.utils import _safe_alias
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 
-router = APIRouter(prefix="/models/sarimax", tags=["models_ia"])
+router = APIRouter(prefix="/models/sarimax", tags=["SARIMAX_model"])
 
 
 # ------------ Schemas ------------
