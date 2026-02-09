@@ -457,59 +457,79 @@ def predicciones_server(input, output, session):
         return sel
 
 
-    @reactive.calc
-    def sarimax_results():
-        if current_step.get() != 4:
-            return None
+    
+    sarimax_results_rv = reactive.Value(None)
 
-        predictors_used = exog_selected()
+    @reactive.Effect
+    @reactive.event(input.btn_update_sarimax)
+    def _run_sarimax_model():
+        # Evitar ejecución inicial o reseteos a 0
+        if input.btn_update_sarimax() == 0:
+            return
 
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": predictors_used,                    
-            "filters_by_var": selected_filters_by_var(),
-            "train_ratio": 0.70,
-            "auto_params": True,    
-            "s": 12,
-            "return_df": True
-        }
+        with reactive.isolate():
+            predictors_used = exog_selected()
+            
+            payload = {
+                "target_var": target_var_rv.get(),
+                "predictors": predictors_used,                    
+                "filters_by_var": selected_filters_by_var(),
+                "train_ratio": 0.70,
+                "auto_params": True,    
+                "s": 12,
+                "return_df": True
+            }
 
-        resp = sarimax_run(payload)
+            try:
+                resp = sarimax_run(payload)
+                
+                df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+                if df is None or df.empty:
+                    sarimax_results_rv.set(None)
+                    return
 
-        df = pd.DataFrame(resp["df"]) if resp.get("df") else None
-        if df is None or df.empty:
-            return None
+                y_col = resp["y_col"]
+                n_train = resp["n_train"]
+                n_test = resp["n_test"]
 
-        y_col = resp["y_col"]
-        n_train = resp["n_train"]
-        n_test = resp["n_test"]
+                train = df.iloc[:n_train]
+                test = df.iloc[n_train:n_train + n_test]
 
-        train = df.iloc[:n_train]
-        test = df.iloc[n_train:n_train + n_test]
+                pred_vals = resp["y_pred"]
+                pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
 
-        pred_vals = resp["y_pred"]
-        pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
+                fig = plot_predictions(
+                    df=df,
+                    pred=pred_test,
+                    title="Predicciones SARIMAX",
+                    ylabel="Valores",
+                    xlabel="Fecha",
+                    column_y=y_col,
+                    periodos_a_predecir=n_test,
+                    holidays_col=None
+                )
 
-        fig = plot_predictions(
-            df=df,
-            pred=pred_test,
-            title="Predicciones SARIMAX",
-            ylabel="Valores",
-            xlabel="Fecha",
-            column_y=y_col,
-            periodos_a_predecir=n_test,
-            holidays_col=None
-        )
+                sarimax_results_rv.set({
+                    "mape": resp["mape"],
+                    "rmse": resp["rmse"],
+                    "mae": resp["mae"],
+                    "fig": fig,
+                    "order": resp["order"],
+                    "seasonal_order": resp["seasonal_order"],
+                    "predictors_used": predictors_used,
+                })
+            except Exception as e:
+                print(f"Error executing SARIMAX: {e}")
+                sarimax_results_rv.set(None)
 
-        return {
-            "mape": resp["mape"],
-            "rmse": resp["rmse"],
-            "mae": resp["mae"],
-            "fig": fig,
-            "order": resp["order"],
-            "seasonal_order": resp["seasonal_order"],
-            "predictors_used": predictors_used,
-        }
+
+    # Limpiar resultados si cambian los inputs (para obligar a recalcular)
+    @reactive.Effect
+    @reactive.event(input.sarimax_exogs)
+    def _clear_results_on_change():
+        # Solo limpiar si ya hay resultados mostrados, para evitar flicker inicial
+        if sarimax_results_rv.get() is not None:
+             sarimax_results_rv.set(None)
 
 
     @output
@@ -518,22 +538,34 @@ def predicciones_server(input, output, session):
         if current_step.get() != 4:
             return ui.div()
 
-        choices = exog_choices()
-        selected = exog_selected()
+        with reactive.isolate():
+            choices = exog_choices()
+            
+            # Recuperar selección actual del input si existe, sino usar default
+            selected = input.sarimax_exogs() if "sarimax_exogs" in input else exog_selected()
 
-        res = sarimax_results()
+
+        res = sarimax_results_rv.get()
+        
+        # Botón de actualizar
+        update_btn = ui.div(
+            ui.input_action_button("btn_update_sarimax", "Actualizar Modelo (Recalcular)", class_="btn-success"),
+            style="margin: 12px 0;"
+        )
+
         if res is None:
             return ui.div(
                 PANEL_STYLES,
                 ui.h3("Panel 4: Resultados del modelo SARIMAX"),
-                ui.p("Configura las variables exógenas y se recalculará el modelo."),
+                ui.p("Configura las variables exógenas y pulsa Actualizar."),
                 ui.input_checkbox_group(
                     "sarimax_exogs",
                     "Variables exógenas (activar/desactivar)",
                     choices=choices,
                     selected=selected,
                 ),
-                ui.p("Aún no hay resultados (df vacío o error)."),
+                update_btn,
+                ui.p("Aún no hay resultados (pulsa Actualizar)."),
                 ui.div(
                     ui.input_action_button("btn_prev_4", "← Anterior"),
                     style="margin-top: 12px;",
@@ -545,7 +577,7 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 4: SARIMAX — activar/desactivar exógenas"),
-            ui.p("Marca qué variables exógenas quieres usar. Al cambiar, se recalcula el modelo."),
+            ui.p("Marca qué variables exógenas quieres usar y pulsa Actualizar."),
 
             ui.input_checkbox_group(
                 "sarimax_exogs",
@@ -553,9 +585,11 @@ def predicciones_server(input, output, session):
                 choices=choices,
                 selected=selected,  
             ),
+            
+            update_btn,
 
             ui.tags.div(
-                ui.tags.span("Exógenas activas: ", style="font-weight:600; margin-right:6px;"),
+                ui.tags.span("Exógenas activas (en modelo actual): ", style="font-weight:600; margin-right:6px;"),
                 ui.tags.span(", ".join(res["predictors_used"]) if res["predictors_used"] else "Ninguna"),
                 style="margin: 10px 0;",
             ),
@@ -590,7 +624,7 @@ def predicciones_server(input, output, session):
     @output
     @render.plot
     def sarimax_plot():
-        res = sarimax_results()
+        res = sarimax_results_rv.get()
         if res is None:
             return None
         return res["fig"]
