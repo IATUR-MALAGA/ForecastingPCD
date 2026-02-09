@@ -247,8 +247,9 @@ def predicciones_server(input, output, session):
 
             ui.accordion(*panels, id="acc_predictors", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_2", "← Anterior"),
                 ui.input_action_button("btn_next_2", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
             ),
         )
 
@@ -263,6 +264,11 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     def _sync_predictors_rv():
         predictors_rv.set(selected_predictors())
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_2)
+    def _go_step_1():
+        current_step.set(1)
 
     @reactive.Effect
     @reactive.event(input.btn_next_2)
@@ -412,10 +418,16 @@ def predicciones_server(input, output, session):
             ui.p("Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
         ),
     )
+    @reactive.Effect
+    @reactive.event(input.btn_prev_3)
+    def _go_step_2():
+        current_step.set(2)
+
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
