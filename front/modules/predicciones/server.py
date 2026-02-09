@@ -157,7 +157,15 @@ def predicciones_server(input, output, session):
                     class_=("compat-badge compat-yes" if compat else "compat-badge compat-no"),
                 )
 
-                reason_ui = ui.tags.div(reason, class_="compat-reason") if (not compat and reason) else ui.div()
+                reason_ui = (
+                    ui.tags.div(
+                        ui.tags.strong("Motivo de incompatibilidad: "),
+                        ui.tags.span(reason, class_="reason-text"),
+                        class_="compat-reason-box",
+                    )
+                    if (not compat and reason)
+                    else None
+                )
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -166,26 +174,44 @@ def predicciones_server(input, output, session):
 
                 var_blocks.append(
                     ui.tags.div(
-                        ui.input_checkbox(var_id, name, value=False),
                         ui.tags.div(
+                            ui.input_checkbox(var_id, name, value=False),
+                            badge,
+                            style="display: flex; align-items: baseline; gap: 6px;",
+                        ),
+                        ui.tags.details(
+                            ui.tags.summary("Ver más", style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;"),
+                            ui.tags.div(
+                                reason_ui if reason_ui else ui.div(),
                                 ui.tags.div(
                                     ui.tags.div(
-                                        ui.tags.span("Compatibilidad", class_="var-meta-key"),
-                                        ui.tags.div(badge, reason_ui),
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
                                     ),
-                                    ui.tags.div(ui.tags.span("Temporalidad", class_="var-meta-key"), temporalidad),
-                                    ui.tags.div(ui.tags.span("Granularidad", class_="var-meta-key"), granularidad),
-                                    ui.tags.div(ui.tags.span("Unidad medida", class_="var-meta-key"), unidad_medida),
-                                    ui.tags.div(ui.tags.span("Fuente", class_="var-meta-key"), fuente),
-                                    class_="var-meta-grid",
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                 ),
-
-                            ui.tags.div(
-                                ui.tags.span("Descripción", class_="var-meta-key"),
-                                ui.tags.div(descripcion, class_="var-desc"),
-                                style="margin-top:6px;",
+                                style="margin-top: 8px; padding: 8px 0;",
                             ),
-                            class_="var-meta",
                         ),
                         class_="var-item",
                     )
@@ -221,8 +247,9 @@ def predicciones_server(input, output, session):
 
             ui.accordion(*panels, id="acc_predictors", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_2", "← Anterior"),
                 ui.input_action_button("btn_next_2", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
             ),
         )
 
@@ -237,6 +264,11 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     def _sync_predictors_rv():
         predictors_rv.set(selected_predictors())
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_2)
+    def _go_step_1():
+        current_step.set(1)
 
     @reactive.Effect
     @reactive.event(input.btn_next_2)
@@ -386,10 +418,16 @@ def predicciones_server(input, output, session):
             ui.p("Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
         ),
     )
+    @reactive.Effect
+    @reactive.event(input.btn_prev_3)
+    def _go_step_2():
+        current_step.set(2)
+
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
@@ -496,6 +534,10 @@ def predicciones_server(input, output, session):
                     selected=selected,
                 ),
                 ui.p("Aún no hay resultados (df vacío o error)."),
+                ui.div(
+                    ui.input_action_button("btn_prev_4", "← Anterior"),
+                    style="margin-top: 12px;",
+                ),
             )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
@@ -537,6 +579,11 @@ def predicciones_server(input, output, session):
             ),
 
             ui.output_plot("sarimax_plot", width="100%", height="420px"),
+
+            ui.div(
+                ui.input_action_button("btn_prev_4", "← Anterior"),
+                style="margin-top: 12px;",
+            ),
         )
 
 
@@ -547,6 +594,11 @@ def predicciones_server(input, output, session):
         if res is None:
             return None
         return res["fig"]
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_4)
+    def _go_step_3_from_4():
+        current_step.set(3)
 
             
 

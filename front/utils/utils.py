@@ -321,6 +321,16 @@ def panel_styles() -> ui.tags.style:
             font-size: 0.85rem;
             color: #57606a;
         }
+        .compat-reason-box {
+            margin-top: 4px;
+            padding: 6px 8px;
+            background: #fef3f2;
+            border-left: 3px solid #f04438;
+            font-size: 0.9em;
+        }
+        .compat-reason-box .reason-text {
+            color: #b42318;
+        }
 
         """
     )
