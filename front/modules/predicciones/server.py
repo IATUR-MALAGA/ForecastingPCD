@@ -166,13 +166,15 @@ def predicciones_server(input, output, session):
 
                 var_blocks.append(
                     ui.tags.div(
-                        ui.input_checkbox(var_id, name, value=False),
                         ui.tags.div(
+                            ui.input_checkbox(var_id, name, value=False),
+                            badge,
+                            style="display: flex; align-items: baseline; gap: 6px;",
+                        ),
+                        ui.tags.div(
+                            reason_ui,
+                            ui.tags.div(
                                 ui.tags.div(
-                                    ui.tags.div(
-                                        ui.tags.span("Compatibilidad", class_="var-meta-key"),
-                                        ui.tags.div(badge, reason_ui),
-                                    ),
                                     ui.tags.div(ui.tags.span("Temporalidad", class_="var-meta-key"), temporalidad),
                                     ui.tags.div(ui.tags.span("Granularidad", class_="var-meta-key"), granularidad),
                                     ui.tags.div(ui.tags.span("Unidad medida", class_="var-meta-key"), unidad_medida),
@@ -180,12 +182,13 @@ def predicciones_server(input, output, session):
                                     class_="var-meta-grid",
                                 ),
 
-                            ui.tags.div(
-                                ui.tags.span("Descripción", class_="var-meta-key"),
-                                ui.tags.div(descripcion, class_="var-desc"),
-                                style="margin-top:6px;",
+                                ui.tags.div(
+                                    ui.tags.span("Descripción", class_="var-meta-key"),
+                                    ui.tags.div(descripcion, class_="var-desc"),
+                                    style="margin-top:6px;",
+                                ),
+                                class_="var-meta",
                             ),
-                            class_="var-meta",
                         ),
                         class_="var-item",
                     )
