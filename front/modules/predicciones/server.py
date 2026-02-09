@@ -534,6 +534,10 @@ def predicciones_server(input, output, session):
                     selected=selected,
                 ),
                 ui.p("Aún no hay resultados (df vacío o error)."),
+                ui.div(
+                    ui.input_action_button("btn_prev_4", "← Anterior"),
+                    style="margin-top: 12px;",
+                ),
             )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
@@ -575,6 +579,11 @@ def predicciones_server(input, output, session):
             ),
 
             ui.output_plot("sarimax_plot", width="100%", height="420px"),
+
+            ui.div(
+                ui.input_action_button("btn_prev_4", "← Anterior"),
+                style="margin-top: 12px;",
+            ),
         )
 
 
@@ -585,6 +594,11 @@ def predicciones_server(input, output, session):
         if res is None:
             return None
         return res["fig"]
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_4)
+    def _go_step_3_from_4():
+        current_step.set(3)
 
             
 
