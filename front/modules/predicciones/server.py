@@ -160,8 +160,8 @@ def predicciones_server(input, output, session):
                 reason_ui = (
                     ui.tags.div(
                         ui.tags.strong("Motivo de incompatibilidad: "),
-                        ui.tags.span(reason, style="color: #b42318;"),
-                        style="margin-top: 4px; padding: 6px 8px; background: #fef3f2; border-left: 3px solid #f04438; font-size: 0.9em;",
+                        ui.tags.span(reason, class_="reason-text"),
+                        class_="compat-reason-box",
                     )
                     if (not compat and reason)
                     else None
