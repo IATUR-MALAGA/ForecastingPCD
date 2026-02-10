@@ -55,4 +55,7 @@ def get_tableName_for_variable(nombre: str) -> List[Dict[str, Any]]:
 
 def sarimax_run(payload: dict) -> dict:
     return _post("/api/models/sarimax/run", payload)
+
+def xgboost_run(payload: dict) -> dict:
+    return _post("/api/models/xgboost/run", payload)
  
