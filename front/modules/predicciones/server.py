@@ -540,8 +540,8 @@ def predicciones_server(input, output, session):
         with reactive.isolate():
             choices = exog_choices()
             
-            # Recuperar selección actual del input si existe, sino usar default
-            selected = input.sarimax_exogs() if "sarimax_exogs" in input else exog_selected()
+            # Usar exog_selected() para garantizar consistencia con choices y evitar None
+            selected = exog_selected()
 
 
         res = sarimax_results_rv.get()
