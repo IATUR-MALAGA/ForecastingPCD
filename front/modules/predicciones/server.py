@@ -434,9 +434,12 @@ def predicciones_server(input, output, session):
 
 
 ##########################################################################################
-# Panel 4: Play with Model and Variables
+# Panel 4: Play with Model and Variables (CON BOTÓN: NO calcula hasta pulsar)
 ##########################################################################################
 
+    # ------------------------
+    # Inputs auxiliares
+    # ------------------------
     @reactive.calc
     def exog_choices():
         return list(predictors_rv.get() or [])
@@ -445,8 +448,8 @@ def predicciones_server(input, output, session):
     def selected_model():
         # Evita primer ciclo cuando el input aún no existe
         if "model_choice" not in input:
-            return "xgboost"  # default
-        return input.model_choice() or "xgboost"
+            return "sarimax"  # default
+        return input.model_choice() or "sarimax"
 
     @reactive.calc
     def exog_selected():
@@ -461,168 +464,183 @@ def predicciones_server(input, output, session):
         sel = [s for s in sel if s in choices]
         return sel
 
+    # ------------------------
+    # Almacén de resultados (solo se llena al pulsar botón)
+    # ------------------------
+    pred_results_rv = reactive.Value(None)
+    last_sig_rv = reactive.Value(None)
 
-    # ------------------------
-    # SARIMAX
-    # ------------------------
     @reactive.calc
-    def sarimax_results():
+    def pred_signature():
+        """
+        Firma del estado de inputs que afecta a la predicción.
+        Si cambia, invalidamos resultados para no mostrar predicciones antiguas.
+        """
         if current_step.get() != 4:
             return None
 
-        # Solo calcula si el modelo seleccionado es SARIMAX
-        if selected_model() != "sarimax":
-            return None
+        model = selected_model()
+        exogs = tuple(exog_selected() or [])
+        target = target_var_rv.get()
+        filters = selected_filters_by_var()
+
+        # filters puede ser dict/list -> lo convertimos a str estable
+        return (model, target, exogs, repr(filters))
+
+    @reactive.effect
+    def _invalidate_prediction_when_inputs_change():
+        sig = pred_signature()
+        if sig is None:
+            return
+
+        last = last_sig_rv.get()
+        if last is not None and sig != last:
+            pred_results_rv.set(None)
+
+    # ------------------------
+    # Cálculo bajo demanda: SOLO al pulsar "Calcula predicción"
+    # ------------------------
+    @reactive.effect
+    @reactive.event(input.calc_pred)
+    def _compute_prediction_on_click():
+        if current_step.get() != 4:
+            return
+
+        # Evita ejecutar si es la primera vez (0 clicks)
+        if input.calc_pred() == 0:
+            return
 
         # Evita primer ciclo sin inputs montados
         if "model_exogs" not in input:
-            return None
+            pred_results_rv.set(None)
+            return
 
+        model = selected_model()
         predictors_used = exog_selected()
 
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": predictors_used,
-            "filters_by_var": selected_filters_by_var(),
-            "train_ratio": 0.70,
-            "auto_params": True,
-            "s": 12,
-            "return_df": True
-        }
+        # ---------- SARIMAX ----------
+        if model == "sarimax":
+            payload = {
+                "target_var": target_var_rv.get(),
+                "predictors": predictors_used,
+                "filters_by_var": selected_filters_by_var(),
+                "train_ratio": 0.70,
+                "auto_params": True,
+                "s": 12,
+                "return_df": True
+            }
 
-        resp = sarimax_run(payload)
+            resp = sarimax_run(payload)
 
-        df = pd.DataFrame(resp["df"]) if resp.get("df") else None
-        if df is None or df.empty:
-            return None
+            df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+            if df is None or df.empty:
+                pred_results_rv.set(None)
+                last_sig_rv.set(pred_signature())
+                return
 
-        y_col = resp["y_col"]
-        n_train = resp["n_train"]
-        n_test = resp["n_test"]
+            y_col = resp["y_col"]
+            n_train = resp["n_train"]
+            n_test = resp["n_test"]
 
-        test = df.iloc[n_train:n_train + n_test]
+            test = df.iloc[n_train:n_train + n_test]
 
-        pred_vals = resp["y_pred"]
-        pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
+            pred_vals = resp["y_pred"]
+            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
 
-        fig = plot_sarimax(
-            df=df,
-            pred=pred_test,
-            title="Predicciones SARIMAX",
-            ylabel="Valores",
-            xlabel="Fecha",
-            column_y=y_col,
-            periodos_a_predecir=n_test,
-            holidays_col=None
-        )
+            fig = plot_sarimax(
+                df=df,
+                pred=pred_test,
+                title="Predicciones SARIMAX",
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=n_test,
+                holidays_col=None
+            )
 
-        return {
-            "model": "sarimax",
-            "mape": resp["mape"],
-            "rmse": resp["rmse"],
-            "mae": resp["mae"],
-            "fig": fig,
-            "order": resp["order"],
-            "seasonal_order": resp["seasonal_order"],
-            "predictors_used": predictors_used,
-        }
+            pred_results_rv.set({
+                "model": "sarimax",
+                "mape": resp["mape"],
+                "rmse": resp["rmse"],
+                "mae": resp["mae"],
+                "fig": fig,
+                "order": resp["order"],
+                "seasonal_order": resp["seasonal_order"],
+                "predictors_used": predictors_used,
+            })
 
+        # ---------- XGBOOST ----------
+        else:
+            payload = {
+                "target_var": target_var_rv.get(),
+                "predictors": predictors_used,
+                "filters_by_var": selected_filters_by_var(),
+                "train_ratio": 0.70,
 
-    # ------------------------
-    # XGBOOST
-    # ------------------------
-    @reactive.calc
-    def xgboost_results():
-        if current_step.get() != 4:
-            return None
+                # XGBoost
+                "auto_params": True,
+                "use_target_lags": True,
+                "max_lag": 12,
+                "recursive_forecast": True,
 
-        # Solo calcula si el modelo seleccionado es XGBoost
-        if selected_model() != "xgboost":
-            return None
+                "return_df": True
+            }
 
-        if "model_exogs" not in input:
-            return None
+            resp = xgboost_run(payload)
 
-        predictors_used = exog_selected()
+            df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+            if df is None or df.empty:
+                pred_results_rv.set(None)
+                last_sig_rv.set(pred_signature())
+                return
 
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": predictors_used,
-            "filters_by_var": selected_filters_by_var(),
-            "train_ratio": 0.70,
+            y_col = resp["y_col"]
+            n_train = resp["n_train"]
+            n_test = resp["n_test"]
 
-            # XGBoost
-            "auto_params": True,
-            "use_target_lags": True,
-            "max_lag": 12,
-            "recursive_forecast": True,
+            test = df.iloc[n_train:n_train + n_test]
 
-            "return_df": True
-        }
+            pred_vals = resp["y_pred"]
+            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
 
-        resp = xgboost_run(payload)
+            fig = plot_xgb(
+                df=df,
+                pred=pred_test,
+                title="Predicciones XGBoost",
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=n_test,
+                holidays_col=None
+            )
 
-        df = pd.DataFrame(resp["df"]) if resp.get("df") else None
-        if df is None or df.empty:
-            return None
+            pred_results_rv.set({
+                "model": "xgboost",
+                "mape": resp["mape"],
+                "rmse": resp["rmse"],
+                "mae": resp["mae"],
+                "fig": fig,
+                "xgb_params": resp.get("xgb_params"),
+                "feature_cols": resp.get("feature_cols"),
+                "predictors_used": predictors_used,
+            })
 
-        y_col = resp["y_col"]
-        n_train = resp["n_train"]
-        n_test = resp["n_test"]
-
-        test = df.iloc[n_train:n_train + n_test]
-
-        pred_vals = resp["y_pred"]
-        pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
-
-        fig = plot_xgb(
-            df=df,
-            pred=pred_test,
-            title="Predicciones XGBoost",
-            ylabel="Valores",
-            xlabel="Fecha",
-            column_y=y_col,
-            periodos_a_predecir=n_test,
-            holidays_col=None
-        )
-
-        return {
-            "model": "xgboost",
-            "mape": resp["mape"],
-            "rmse": resp["rmse"],
-            "mae": resp["mae"],
-            "fig": fig,
-            "xgb_params": resp.get("xgb_params"),
-            "feature_cols": resp.get("feature_cols"),
-            "predictors_used": predictors_used,
-        }
-
+        # Guarda la firma del estado con el que se calculó (para invalidar si cambian inputs)
+        last_sig_rv.set(pred_signature())
 
     # ------------------------
-    # Resultado unificado (según modelo)
-    # ------------------------
-    @reactive.calc
-    def selected_results():
-        m = selected_model()
-        if m == "sarimax":
-            return sarimax_results()
-        return xgboost_results()
-
-
-    # ------------------------
-    # Plot unificado
+    # Plot unificado (usa el almacén, no calcula)
     # ------------------------
     @output
     @render.plot
     def model_plot():
-        res = selected_results()
+        res = pred_results_rv.get()
         if not res:
             return None
         return res["fig"]
 
-
     # ------------------------
-    # UI Panel 4
+    # UI Panel 4 (incluye botón y muestra resultados si existen)
     # ------------------------
     @output
     @render.ui
@@ -634,10 +652,11 @@ def predicciones_server(input, output, session):
         selected = exog_selected()
         model = selected_model()
 
-        res = selected_results()
+        # OJO: ahora NO usamos selected_results(); usamos el almacén
+        res = pred_results_rv.get()
 
         title = "Panel 4: Selección de modelo + exógenas"
-        subtitle = "Elige el modelo y qué exógenas usar. Al cambiar, se recalcula SOLO el modelo seleccionado."
+        subtitle = "Elige el modelo y qué exógenas usar. La predicción SOLO se ejecuta cuando pulsas el botón."
 
         # Cabecera + inputs siempre visibles
         header = ui.div(
@@ -659,12 +678,18 @@ def predicciones_server(input, output, session):
                 choices=choices,
                 selected=selected,
             ),
+
+            ui.input_action_button(
+                "calc_pred",
+                "Calcula predicción",
+                class_="btn-primary",
+            ),
         )
 
         if res is None:
             return ui.div(
                 header,
-                ui.p("Aún no hay resultados (df vacío, inputs no inicializados o error).")
+                ui.p("Pulsa «Calcula predicción» para ejecutar el modelo con la selección actual.")
             )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
