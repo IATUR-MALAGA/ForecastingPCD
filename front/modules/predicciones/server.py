@@ -492,7 +492,6 @@ def predicciones_server(input, output, session):
                 n_train = resp["n_train"]
                 n_test = resp["n_test"]
 
-                train = df.iloc[:n_train]
                 test = df.iloc[n_train:n_train + n_test]
 
                 pred_vals = resp["y_pred"]
