@@ -685,11 +685,16 @@ def predicciones_server(input, output, session):
                 class_="btn-primary",
             ),
         )
+        footer = ui.div(
+                ui.input_action_button("btn_prev_4", "← Anterior"),
+                style="margin-top: 12px;",
+            )
 
         if res is None:
             return ui.div(
                 header,
-                ui.p("Pulsa «Calcula predicción» para ejecutar el modelo con la selección actual.")
+                ui.p("Pulsa «Calcula predicción» para ejecutar el modelo con la selección actual."),
+                footer
             )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
@@ -738,4 +743,11 @@ def predicciones_server(input, output, session):
             extra,
 
             ui.output_plot("model_plot", width="100%", height="420px"),
+
+            footer,
         )
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_4)
+    def _go_step_3_from_4():
+        current_step.set(3)
