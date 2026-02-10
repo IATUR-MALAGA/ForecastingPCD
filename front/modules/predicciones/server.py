@@ -18,6 +18,7 @@ from front.utils.utils import (
     PrediccionesCache,
     compatibilidad_con_objetivo,
     panel_styles,
+    ICON_SVG_INFO,
 )
 
 
@@ -155,15 +156,14 @@ def predicciones_server(input, output, session):
                     class_=("compat-badge compat-yes" if compat else "compat-badge compat-no"),
                 )
 
-                reason_ui = (
-                    ui.tags.div(
-                        ui.tags.strong("Motivo de incompatibilidad: "),
-                        ui.tags.span(reason, class_="reason-text"),
-                        class_="compat-reason-box",
+                info_icon = None
+                if not compat and reason:
+                    info_icon = ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        reason,
                     )
-                    if (not compat and reason)
-                    else None
-                )
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -175,12 +175,12 @@ def predicciones_server(input, output, session):
                         ui.tags.div(
                             ui.input_checkbox(var_id, name, value=False),
                             badge,
+                            info_icon,
                             style="display: flex; align-items: baseline; gap: 6px;",
                         ),
                         ui.tags.details(
                             ui.tags.summary("Ver más", style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;"),
                             ui.tags.div(
-                                reason_ui if reason_ui else ui.div(),
                                 ui.tags.div(
                                     ui.tags.div(
                                         ui.tags.strong("Temporalidad: "),
