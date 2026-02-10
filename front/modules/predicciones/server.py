@@ -530,7 +530,14 @@ def predicciones_server(input, output, session):
         if sarimax_results_rv.get() is not None:
             sarimax_results_rv.set(None)
 
-
+    # También limpiar resultados si cambian objetivo, predictoras o filtros,
+    # ya que el payload del modelo depende de ellos.
+    @reactive.Effect
+    @reactive.event(target_var_rv, predictors_rv, selected_filters_by_var)
+    def _clear_results_on_config_change():
+        # Solo limpiar si ya hay resultados mostrados, para evitar flicker inicial
+        if sarimax_results_rv.get() is not None:
+            sarimax_results_rv.set(None)
     @output
     @render.ui
     def step_panel_4():
