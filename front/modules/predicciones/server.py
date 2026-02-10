@@ -519,7 +519,7 @@ def predicciones_server(input, output, session):
                 })
             except Exception as e:
                 print(f"Error executing SARIMAX: {e}")
-                sarimax_results_rv.set(None)
+                sarimax_results_rv.set({"error": str(e)})
 
 
     # Limpiar resultados si cambian los inputs (para obligar a recalcular)
@@ -565,6 +565,29 @@ def predicciones_server(input, output, session):
                 ),
                 update_btn,
                 ui.p("Aún no hay resultados (pulsa Actualizar)."),
+                ui.div(
+                    ui.input_action_button("btn_prev_4", "← Anterior"),
+                    style="margin-top: 12px;",
+                ),
+            )
+
+        if "error" in res:
+            return ui.div(
+                PANEL_STYLES,
+                ui.h3("Panel 4: Resultados del modelo SARIMAX"),
+                ui.p("Ha ocurrido un error durante la ejecución."),
+                ui.input_checkbox_group(
+                    "sarimax_exogs",
+                    "Variables exógenas (activar/desactivar)",
+                    choices=choices,
+                    selected=selected,
+                ),
+                update_btn,
+                ui.div(
+                    ui.tags.strong("Detalle del error: "),
+                    ui.tags.span(res["error"]),
+                    style="color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 4px; margin-top: 10px;"
+                ),
                 ui.div(
                     ui.input_action_button("btn_prev_4", "← Anterior"),
                     style="margin-top: 12px;",
@@ -624,7 +647,7 @@ def predicciones_server(input, output, session):
     @render.plot
     def sarimax_plot():
         res = sarimax_results_rv.get()
-        if res is None:
+        if res is None or "error" in res:
             return None
         return res["fig"]
 
