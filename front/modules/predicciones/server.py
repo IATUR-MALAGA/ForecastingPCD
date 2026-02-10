@@ -528,7 +528,7 @@ def predicciones_server(input, output, session):
     def _clear_results_on_change():
         # Solo limpiar si ya hay resultados mostrados, para evitar flicker inicial
         if sarimax_results_rv.get() is not None:
-             sarimax_results_rv.set(None)
+            sarimax_results_rv.set(None)
 
 
     @output
