@@ -12,6 +12,18 @@ def plot_predictions(
     periodos_a_predecir=2,
     holidays_col=None
 ):
+    df = df.copy()
+
+    # Si el índice no es de fechas, lo construimos a partir de anio/mes(/dia)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if {"anio", "mes"}.issubset(df.columns):
+            if "dia" in df.columns:
+                idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=df["dia"]))
+            else:
+                idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=1))
+            df = df.set_index(idx).sort_index()
+        else:
+            raise ValueError("df debe tener DatetimeIndex o columnas anio/mes(/dia).")
     train = df.iloc[:-periodos_a_predecir]
 
     # Asegura que pred tenga índice de fechas (MUY recomendable)

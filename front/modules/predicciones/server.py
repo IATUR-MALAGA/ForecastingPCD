@@ -6,8 +6,7 @@ from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
     get_tableName_for_variable,
 )
-from back.models.SARIMAX.sarimax_graph import plot_predictions as plot_sarimax
-from back.models.XGBoost.xgboost_graph import plot_predictions as plot_xgb
+from back.models.utils.models_graph import plot_predictions
 
 from front.utils.utils import (
     slug as _slug,  
@@ -546,8 +545,8 @@ def predicciones_server(input, output, session):
 
             pred_vals = resp["y_pred"]
             pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
-
-            fig = plot_sarimax(
+            
+            fig = plot_predictions(
                 df=df,
                 pred=pred_test,
                 title="Predicciones SARIMAX",
@@ -603,7 +602,7 @@ def predicciones_server(input, output, session):
             pred_vals = resp["y_pred"]
             pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
 
-            fig = plot_xgb(
+            fig = plot_predictions(
                 df=df,
                 pred=pred_test,
                 title="Predicciones XGBoost",
