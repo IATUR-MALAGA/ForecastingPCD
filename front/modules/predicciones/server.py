@@ -569,7 +569,7 @@ def predicciones_server(input, output, session):
             })
 
         # ---------- XGBOOST ----------
-        else:
+        elif model == "xgboost":
             payload = {
                 "target_var": target_var_rv.get(),
                 "predictors": predictors_used,

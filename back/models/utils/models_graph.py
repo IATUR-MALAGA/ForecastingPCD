@@ -5,10 +5,10 @@ import pandas as pd
 def plot_predictions(
     df,
     pred,
-    title='Tourist Visitors Prediction',
-    ylabel='Number of Tourists',
-    xlabel='Date',
-    column_y='y_turistas',
+    title,
+    ylabel,
+    xlabel,
+    column_y,
     periodos_a_predecir=2,
     holidays_col=None
 ):
@@ -57,6 +57,7 @@ def plot_predictions(
         if l and l != "_nolegend_" and l not in uniq:
             uniq[l] = h
     ax.legend(uniq.values(), uniq.keys(), loc="best")
-
+    print(train)
+    print(pred)
     fig.tight_layout()
     return fig   # <-- devuelve figura (más cómodo para Shiny)

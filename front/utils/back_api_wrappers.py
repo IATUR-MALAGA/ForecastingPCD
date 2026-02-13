@@ -6,7 +6,7 @@ import httpx
 
 # Configurable por entorno
 BASE_URL = os.getenv("BACK_API_URL", "http://127.0.0.1:8000")
-TIMEOUT = float(os.getenv("BACK_API_TIMEOUT", "30"))
+TIMEOUT = float("600")
 
 _client = httpx.Client(base_url=BASE_URL, timeout=TIMEOUT)
 

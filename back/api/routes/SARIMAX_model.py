@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from front.utils.utils import create_dataframe_based_on_selection
+from front.utils.utils import _find_col, add_fourier_annual_terms, create_dataframe_based_on_selection
 from front.utils.utils import _safe_alias
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
@@ -71,8 +71,31 @@ def sarimax_run(req: SarimaxRunRequest):
         if df is None or len(df) == 0:
             raise HTTPException(status_code=422, detail="El dataframe resultante está vacío")
 
+        # Columnas calendario (robusto a alias)
+        dia_col = _find_col(df, "dia", _safe_alias("dia"))
+        mes_col = _find_col(df, "mes", _safe_alias("mes"))
+        ano_col = _find_col(df, "año", "ano", _safe_alias("año"), _safe_alias("ano"))
+
+        use_fourier = dia_col is not None  # prioridad: si hay 'dia', usas Fourier
+
         exog_cols = [_safe_alias(c) for c in (req.predictors or [])]
         y_col = _safe_alias(req.target_var)
+
+        # (Opcional) evita meter columnas de calendario como exog “tal cual”
+        calendar_like = {_safe_alias("dia"), _safe_alias("mes"), _safe_alias("año"), _safe_alias("ano")}
+        exog_cols = [c for c in exog_cols if c not in calendar_like]
+
+        # Si diario: añade Fourier anual
+        if use_fourier:
+            K = getattr(req, "fourier_k", 6)  # si no existe en tu request, usa 6
+            df, fourier_cols = add_fourier_annual_terms(df, dia_col=dia_col, K=K, m=365)
+
+            # Si tu _safe_alias cambia nombres, renómbralos a versión safe
+            fourier_cols_safe = [_safe_alias(c) for c in fourier_cols]
+            rename_map = dict(zip(fourier_cols, fourier_cols_safe))
+            df = df.rename(columns=rename_map)
+
+            exog_cols = exog_cols + fourier_cols_safe
 
         n = len(df)
         n_train = int(n * req.train_ratio)
@@ -86,20 +109,35 @@ def sarimax_run(req: SarimaxRunRequest):
 
         train = df.iloc[:n_train]
         test = df.iloc[n_train:n_train + n_test]
-
         exog_test = test[exog_cols] if exog_cols else None
-
         if req.auto_params:
-            order, seas = best_sarimax_params(
-                df=df,
-                exog_cols=exog_cols,
-                column_y=y_col,
-                s=req.s,
-                periodos_a_predecir=n_test
-            )
+            if use_fourier:
+                # NO estacional: anualidad ya está en Fourier (exog)
+                order, seas = best_sarimax_params(
+                    df=df,
+                    exog_cols=exog_cols,
+                    column_y=y_col,
+                    s=1,  # se ignora al no ser estacional
+                    periodos_a_predecir=n_test,
+                    seasonal=False
+                )
+                seas = (0, 0, 0, 0)  # asegúralo explícito
+            else:
+                # Mensual (mes+año) o lo que sea: tu comportamiento actual
+                order, seas = best_sarimax_params(
+                    df=df,
+                    exog_cols=exog_cols,
+                    column_y=y_col,
+                    s=req.s,
+                    periodos_a_predecir=n_test,
+                    seasonal=True
+                )
         else:
             order = req.order or (0, 1, 0)
-            seas = req.seasonal_order or (0, 0, 0, 12)
+            if use_fourier:
+                seas = (0, 0, 0, 0)
+            else:
+                seas = req.seasonal_order or (0, 0, 0, 12)
 
         model_fit = create_sarimax_model(
             train=train,
@@ -115,11 +153,7 @@ def sarimax_run(req: SarimaxRunRequest):
             exog=exog_test
         )
 
-        mape, rmse, mae = compute_metrics(
-            pred=pred_test,
-            df_test=test,
-            indicador=y_col
-        )
+        mape, rmse, mae = compute_metrics(pred=pred_test, df_test=test, indicador=y_col)
 
         out = SarimaxRunResponse(
             y_col=y_col,
