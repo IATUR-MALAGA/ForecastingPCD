@@ -1,6 +1,10 @@
-import matplotlib.pyplot as plt
 from collections import OrderedDict
+
+import matplotlib.pyplot as plt
 import pandas as pd
+
+from back.config import settings
+
 
 def plot_predictions(
     df,
@@ -10,11 +14,10 @@ def plot_predictions(
     xlabel,
     column_y,
     periodos_a_predecir=2,
-    holidays_col=None
+    holidays_col=None,
 ):
     df = df.copy()
 
-    # Índice temporal
     if not isinstance(df.index, pd.DatetimeIndex):
         if {"anio", "mes"}.issubset(df.columns):
             if "dia" in df.columns:
@@ -29,33 +32,32 @@ def plot_predictions(
     periodos_a_predecir = max(1, min(periodos_a_predecir, len(df) - 1))
     train = df.iloc[:-periodos_a_predecir]
 
-    # Alinear índice de pred al final del df (ideal si df ya incluye futuro)
     if not isinstance(pred.index, pd.DatetimeIndex):
         pred = pd.Series(pred.values, index=df.index[-len(pred):], name=getattr(pred, "name", None))
 
-    fig, ax = plt.subplots(figsize=(12, 4))
+    figsize = tuple(settings.get("plots.predictions.figsize", [12, 4]))
+    scatter_size = int(settings.get("plots.predictions.scatter_size_single_point", 30))
+    scatter_color = settings.get("plots.predictions.prediction_scatter_color", "red")
 
-    # Train
+    fig, ax = plt.subplots(figsize=figsize)
     train[column_y].plot(ax=ax, label="Train")
 
-    # Prediction (si 1 punto, scatter grande)
     if len(pred) == 1:
-        ax.scatter(pred.index, pred.values, label="Prediction", zorder=5, s=30, color='red')
+        ax.scatter(pred.index, pred.values, label="Prediction", zorder=5, s=scatter_size, color=scatter_color)
     else:
         pred.plot(ax=ax, label="Prediction")
 
-    # ✅ CLAVE: reescalar para que entre la predicción en el eje
     ax.relim()
     ax.autoscale_view()
 
-    # Padding temporal para que el último punto no quede pegado al borde
     if isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 1:
         dt_min, dt_max = df.index.min(), df.index.max()
-        # tamaño de paso típico (median) para monthly/daily/etc.
-        step = (df.index.to_series().diff().median())
+        step = df.index.to_series().diff().median()
         if pd.isna(step) or step <= pd.Timedelta(0):
-            step = pd.Timedelta(days=30)  # fallback razonable
-        pad = step * 2  # 2 pasos de margen
+            fallback_days = int(settings.get("plots.predictions.fallback_step_days", 30))
+            step = pd.Timedelta(days=fallback_days)
+        padding_steps = int(settings.get("plots.predictions.x_axis_padding_steps", 2))
+        pad = step * padding_steps
         ax.set_xlim(dt_min - pad, dt_max + pad)
     else:
         ax.set_xlim(df.index.min(), df.index.max())
@@ -63,13 +65,12 @@ def plot_predictions(
     ax.set(xlabel=xlabel, ylabel=ylabel)
     ax.set_title(title)
 
-    # Holidays
     if holidays_col is not None and holidays_col in df.columns:
         idx_common = df.index.intersection(pred.index)
         holidays_pred = df.loc[idx_common]
         holidays_pred = holidays_pred[holidays_pred[holidays_col] == 1]
         for x in holidays_pred.index:
-            ax.axvline(x=x, color='k', alpha=0.3)
+            ax.axvline(x=x, color="k", alpha=0.3)
 
     handles, labels = ax.get_legend_handles_labels()
     uniq = OrderedDict()

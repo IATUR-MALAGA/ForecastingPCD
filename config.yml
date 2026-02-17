@@ -45,12 +45,21 @@ paths:
 db:
   default_schema: "IA"
   identifier_regex: "^[A-Za-z_][A-Za-z0-9_]*$"
+  catalog:
+    schema: "IA"
+    variables_table: "tbl_catalogo_variables"
+    filters_table: "tbl_admin_filtro"
+  queries:
+    default_limit: 100
+    default_offset: 0
+    allowed_aggregations: ["SUM", "AVG", "MIN", "MAX"]
   connection:
     host: "alcazaba2.uma.es"
     port: 5432
     dbname: "unibigdata"
     user: ""
     password: ""
+    connect_timeout: 10
 
 models:
   common:
@@ -62,8 +71,25 @@ models:
   sarimax:
     auto_params: true
     seasonal_period_s: 12
+    target_column: "turistas"
     default_order: [0, 1, 0]
     default_seasonal_order: [0, 0, 0, 12]
+    enforce_invertibility: false
+    enforce_stationarity: false
+    auto_search:
+      periodos_a_predecir: 2
+      seasonal: true
+      p_values: [0, 2]
+      d_values: [0, 2]
+      q_values: [0, 2]
+      P_values: [0, 2]
+      D_values: [0, 2]
+      Q_values: [0, 2]
+      test: "adf"
+      stepwise: true
+      trace: true
+      error_action: "trace"
+      suppress_warnings: false
     fourier:
       enabled_when_daily: true
       k: 6
@@ -71,6 +97,7 @@ models:
 
   xgboost:
     auto_params: true
+    target_column: "turistas"
     use_target_lags: true
     max_lag: 12
     recursive_forecast: true
@@ -88,6 +115,33 @@ models:
       colsample_bytree: 0.9
       reg_lambda: 1.0
       reg_alpha: 0.0
+    auto_search:
+      periodos_a_predecir: 2
+      cv_splits: 3
+      n_iter: 20
+      scoring: "neg_root_mean_squared_error"
+      n_jobs: 1
+      verbose: 2
+      error_score: "raise"
+      param_grid:
+        n_estimators: [100, 200, 400]
+        max_depth: [2, 3, 4, 5]
+        min_child_weight: [1, 5, 10]
+        learning_rate: [0.03, 0.05, 0.1]
+        subsample: [0.7, 0.9, 1.0]
+        colsample_bytree: [0.7, 0.9, 1.0]
+        reg_lambda: [0.0, 1.0, 5.0]
+        reg_alpha: [0.0, 0.1, 1.0]
+  metrics:
+    target_column: "turistas"
+
+plots:
+  predictions:
+    figsize: [12, 4]
+    scatter_size_single_point: 30
+    prediction_scatter_color: "red"
+    fallback_step_days: 30
+    x_axis_padding_steps: 2
 
 # Sección frontend (se mantiene por compatibilidad con app.py/front)
 frontend:

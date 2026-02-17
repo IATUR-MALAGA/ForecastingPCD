@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 from psycopg import sql
 
+from back.config import settings
+
 from .core import fetch_data
 from .queries import (
     GET_TABLES_IN_SCHEMA,
@@ -44,7 +46,7 @@ def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
 # Catalog / metadata
 # -------------------------
 
-def get_all_tables_in_schema(schema: str = "IA") -> list[str]:
+def get_all_tables_in_schema(schema: str = settings.get("db.default_schema", "IA")) -> list[str]:
     rows = fetch_data(GET_TABLES_IN_SCHEMA, (schema,)) or []
     return _as_str_list(rows, key="table_name")
 
@@ -74,7 +76,7 @@ def get_bool_group_filters(filtro: str) -> List[Dict[str, Any]]:
 # Safe dynamic-table queries
 # -------------------------
 
-def get_date_range_for_variable(nombre_tabla: str, schema: str = "IA") -> List[Dict[str, Any]]:
+def get_date_range_for_variable(nombre_tabla: str, schema: str = settings.get("db.default_schema", "IA")) -> List[Dict[str, Any]]:
     try:
         # GET_DATE_RANGE_FOR_VARIABLE ya es sql.SQL(...), así que .format con Identifiers es correcto y seguro.
         q = GET_DATE_RANGE_FOR_VARIABLE.format(
@@ -102,7 +104,12 @@ def get_distinct_values_for_column(schema: str, table: str, column: str) -> list
     # rows suele venir como [{"value": "..."}]
     return _as_str_list(rows, key="value")
 
-def get_all_data(schema: str, table: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+def get_all_data(
+    schema: str,
+    table: str,
+    limit: int = int(settings.get("db.queries.default_limit", 100)),
+    offset: int = int(settings.get("db.queries.default_offset", 0)),
+) -> List[Dict[str, Any]]:
     """
     ⚠️ Ojo: exponer esto como endpoint sin límites es peligroso.
     Por eso obligamos a limit/offset y usamos Identifiers (safe).
@@ -131,7 +138,8 @@ def get_monthly_series_with_filters(
     - Aplica filtros usando col::text IN (...), consistente con DISTINCT::text
     """
     agg_u = (agg or "SUM").strip().upper()
-    if agg_u not in {"SUM", "AVG", "MIN", "MAX"}:
+    allowed_aggs = [str(x).upper() for x in settings.get("db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]) or []]
+    if agg_u not in set(allowed_aggs):
         raise ValueError(f"Agregación no permitida: {agg}")
 
     filters = filters or {}

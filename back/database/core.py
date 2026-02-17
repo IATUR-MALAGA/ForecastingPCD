@@ -1,20 +1,23 @@
-# back/database/core.py
 import logging
-from typing import Any, Dict, List, Sequence, Union, Iterator
 from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Sequence, Union
 
 import psycopg
 from psycopg.rows import dict_row
 
+from back.config import settings
+
 logger = logging.getLogger(__name__)
 
 DB_CONFIG = {
-    "host": "alcazaba2.uma.es",
-    "port": 5432,
-    "dbname": "unibigdata",
-    "user": "unibigdata",
-    "password": "unibigdata",
+    "host": settings.get("db.connection.host", "localhost"),
+    "port": int(settings.get("db.connection.port", 5432)),
+    "dbname": settings.get("db.connection.dbname", ""),
+    "user": settings.get("db.connection.user", ""),
+    "password": settings.get("db.connection.password", ""),
+    "connect_timeout": int(settings.get("db.connection.connect_timeout", 10)),
 }
+
 
 def create_connection_database() -> psycopg.Connection:
     try:
@@ -22,6 +25,7 @@ def create_connection_database() -> psycopg.Connection:
     except psycopg.OperationalError:
         logger.exception("Failed to connect to PostgreSQL")
         raise
+
 
 @contextmanager
 def db_connection() -> Iterator[psycopg.Connection]:
@@ -31,7 +35,9 @@ def db_connection() -> Iterator[psycopg.Connection]:
     finally:
         conn.close()
 
+
 Params = Union[Sequence[Any], Dict[str, Any], None]
+
 
 def fetch_data(query, params: Params = None) -> List[Dict[str, Any]]:
     """
