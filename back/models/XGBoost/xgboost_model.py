@@ -1,38 +1,24 @@
 # back/models/XGBoost/xgboost_model.py
 
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBRegressor
 
-from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.pipeline import Pipeline
+from back.config import settings
 
 
-# -----------------------------
-# Helper para construir la X
-# -----------------------------
 def _build_X(df: pd.DataFrame, feature_cols: Optional[List[str]], column_y: str) -> pd.DataFrame:
-    """
-    Construye la matriz de features X.
-
-    Recomendación para series temporales:
-    - X = (exógenas + lags + calendario) => columnas numéricas y categóricas
-    - NO usar la y contemporánea como feature.
-
-    Si feature_cols viene con elementos -> usa esas columnas.
-    Si feature_cols es None o [] -> usa TODO menos column_y (si existe).
-    """
     if feature_cols is not None and len(feature_cols) > 0:
         missing = [c for c in feature_cols if c not in df.columns]
         if missing:
             raise ValueError(f"Faltan columnas en X: {missing[:20]}")
         return df[feature_cols]
 
-    # fallback: todo menos y
     if column_y not in df.columns:
         raise ValueError(f"column_y '{column_y}' no está en df.columns")
     X = df.drop(columns=[column_y])
@@ -42,7 +28,6 @@ def _build_X(df: pd.DataFrame, feature_cols: Optional[List[str]], column_y: str)
 
 
 def _make_preprocess_and_cols(X: pd.DataFrame):
-    """Crea ColumnTransformer + listas de columnas numéricas/categóricas."""
     cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
     num_cols = [c for c in X.columns if c not in cat_cols]
 
@@ -56,34 +41,23 @@ def _make_preprocess_and_cols(X: pd.DataFrame):
     return preprocess, cat_cols, num_cols
 
 
-# -----------------------------
-# Entrenar modelo XGBoost (Pipeline)
-# -----------------------------
+def _default_xgb_params() -> Dict[str, Any]:
+    params = dict(settings.get("models.xgboost.default_params", {}) or {})
+    params.setdefault("objective", settings.get("models.xgboost.engine.objective", "reg:squarederror"))
+    params.setdefault("tree_method", settings.get("models.xgboost.engine.tree_method", "hist"))
+    params.setdefault("n_jobs", int(settings.get("models.xgboost.engine.n_jobs", 1)))
+    params.setdefault("random_state", int(settings.get("models.xgboost.random_state", 42)))
+    return params
+
+
 def create_xgboost_model(
     train: pd.DataFrame,
-    exog_cols: Optional[List[str]],     # aquí exog_cols = feature_cols reales (exógenas+lags+etc.)
-    column_y: str = "turistas",
-    xgb_params: Optional[Dict[str, Any]] = None
+    exog_cols: Optional[List[str]],
+    column_y: str = settings.get("models.xgboost.target_column", "turistas"),
+    xgb_params: Optional[Dict[str, Any]] = None,
 ) -> Pipeline:
-    """
-    Entrena un Pipeline(preprocess + XGBRegressor) y lo devuelve entrenado.
-    Esto evita errores por columnas categóricas (ej. 'mun_dest').
-    """
     if xgb_params is None:
-        xgb_params = {
-            "n_estimators": 400,
-            "max_depth": 6,
-            "learning_rate": 0.05,
-            "min_child_weight": 1,
-            "subsample": 0.9,
-            "colsample_bytree": 0.9,
-            "reg_lambda": 1.0,
-            "reg_alpha": 0.0,
-            "objective": "reg:squarederror",
-            "tree_method": "hist",
-            "n_jobs": 1,
-            "random_state": 42,
-        }
+        xgb_params = _default_xgb_params()
 
     X_train = _build_X(train, exog_cols, column_y)
     y_train = train[column_y]
@@ -92,47 +66,29 @@ def create_xgboost_model(
 
     model = XGBRegressor(**xgb_params)
 
-    pipe = Pipeline(steps=[
-        ("prep", preprocess),
-        ("model", model),
-    ])
-
+    pipe = Pipeline(steps=[("prep", preprocess), ("model", model)])
     pipe.fit(X_train, y_train)
     return pipe
 
 
-# -----------------------------
-# Predecir con XGBoost (Pipeline)
-# -----------------------------
 def predict_xgboost(
     model_fit: Pipeline,
     df_future: pd.DataFrame,
-    exog_cols: Optional[List[str]],   # feature_cols reales
-    column_y: str = "turistas",
+    exog_cols: Optional[List[str]],
+    column_y: str = settings.get("models.xgboost.target_column", "turistas"),
 ) -> pd.Series:
-    """
-    Predice con el Pipeline entrenado.
-    """
     X_future = _build_X(df_future, exog_cols, column_y)
     preds = model_fit.predict(X_future)
     return pd.Series(preds, index=df_future.index, name=column_y)
 
 
-# -----------------------------
-# Búsqueda de mejores parámetros (Pipeline + OHE)
-# -----------------------------
 def best_xgboost_params(
     df: pd.DataFrame,
-    exog_cols: Optional[List[str]],     # feature_cols reales
-    column_y: str = "turistas",
-    periodos_a_predecir: int = 2,
-    random_state: int = 42
+    exog_cols: Optional[List[str]],
+    column_y: str = settings.get("models.xgboost.target_column", "turistas"),
+    periodos_a_predecir: int = int(settings.get("models.xgboost.auto_search.periodos_a_predecir", 2)),
+    random_state: int = int(settings.get("models.xgboost.random_state", 42)),
 ) -> Dict[str, Any]:
-    """
-    RandomizedSearchCV sobre Pipeline(prep + XGB) con TimeSeriesSplit.
-    Devuelve parámetros del modelo (sin prefijo 'model__').
-    """
-
     print("\n[best_xgboost_params] START")
     print(f"  df.shape={df.shape}")
     print(f"  column_y={column_y}")
@@ -147,15 +103,12 @@ def best_xgboost_params(
             f"[best_xgboost_params] periodos_a_predecir={periodos_a_predecir} >= len(df)={len(df)}"
         )
 
-    # 1) Quitamos los últimos N periodos (futuro)
     df_train = df.iloc[:-periodos_a_predecir]
     print(f"  df_train.shape={df_train.shape}")
 
-    # 2) y
     y_train = df_train[column_y]
     print(f"  y_train.shape={y_train.shape} y_train.nan={y_train.isna().sum()}")
 
-    # 3) X
     X_train = _build_X(df_train, exog_cols, column_y)
     print(f"  X_train.shape={X_train.shape}")
     print("  X_train dtypes (top):")
@@ -166,42 +119,30 @@ def best_xgboost_params(
         print(f"  cat_cols={cat_cols[:20]}")
     print(f"  num_cols(n)={len(num_cols)}")
 
-    # grid (ojo con prefijo model__)
-    param_grid = {
-        "model__n_estimators":     [100, 200, 400],
-        "model__max_depth":        [2, 3, 4, 5],
-        "model__min_child_weight": [1, 5, 10],
-        "model__learning_rate":    [0.03, 0.05, 0.1],
-        "model__subsample":        [0.7, 0.9, 1.0],
-        "model__colsample_bytree": [0.7, 0.9, 1.0],
-        "model__reg_lambda":       [0.0, 1.0, 5.0],
-        "model__reg_alpha":        [0.0, 0.1, 1.0],
-    }
+    raw_grid = settings.get("models.xgboost.auto_search.param_grid", {}) or {}
+    param_grid = {f"model__{k}": v for k, v in raw_grid.items()}
 
     xgb = XGBRegressor(
-        objective="reg:squarederror",
-        tree_method="hist",
-        n_jobs=1,
+        objective=settings.get("models.xgboost.engine.objective", "reg:squarederror"),
+        tree_method=settings.get("models.xgboost.engine.tree_method", "hist"),
+        n_jobs=int(settings.get("models.xgboost.engine.n_jobs", 1)),
         random_state=random_state,
     )
 
-    pipe = Pipeline(steps=[
-        ("prep", preprocess),
-        ("model", xgb),
-    ])
+    pipe = Pipeline(steps=[("prep", preprocess), ("model", xgb)])
 
-    cv = TimeSeriesSplit(n_splits=3)
+    cv = TimeSeriesSplit(n_splits=int(settings.get("models.xgboost.auto_search.cv_splits", 3)))
 
     random_search = RandomizedSearchCV(
         estimator=pipe,
         param_distributions=param_grid,
-        n_iter=20,
-        scoring="neg_root_mean_squared_error",
+        n_iter=int(settings.get("models.xgboost.auto_search.n_iter", 20)),
+        scoring=settings.get("models.xgboost.auto_search.scoring", "neg_root_mean_squared_error"),
         cv=cv,
         random_state=random_state,
-        n_jobs=1,
-        verbose=2,
-        error_score="raise",
+        n_jobs=int(settings.get("models.xgboost.auto_search.n_jobs", 1)),
+        verbose=int(settings.get("models.xgboost.auto_search.verbose", 2)),
+        error_score=settings.get("models.xgboost.auto_search.error_score", "raise"),
     )
 
     print("  >>> llamando a random_search.fit(...) con Pipeline + OneHotEncoder")
@@ -218,7 +159,6 @@ def best_xgboost_params(
     best_params = random_search.best_params_
     print(f"\n[best_xgboost_params] OK best_params(raw)={best_params}")
 
-    # Devuelve params “limpios” para XGBRegressor (sin prefijo model__)
     clean = {k.replace("model__", ""): v for k, v in best_params.items()}
     print(f"[best_xgboost_params] OK best_params(clean)={clean}")
     return clean
