@@ -9,6 +9,8 @@ from front.utils.back_api_wrappers import (
 from back.models.utils.models_graph import plot_predictions
 
 from front.utils.utils import (
+    _to_date,
+    diff_en_temporalidad,
     slug as _slug,  
     stable_id as _stable_id,
     group_by_category as _group_by_category,
@@ -221,7 +223,6 @@ def predicciones_server(input, output, session):
                     value=_slug(cat),
                 )
             )
-        
 
         return ui.div(
             PANEL_STYLES,
@@ -239,8 +240,10 @@ def predicciones_server(input, output, session):
                     ui.tags.span(f"{_fmt(target_start)} → {_fmt(target_end)}"),
                     style="margin-top:4px;",
                 ),
+                ui.output_ui("max_preds_line"),  # <-- NUEVO: se renderiza aparte
                 class_="selection-pill",
             ),
+
 
             ui.accordion(*panels, id="acc_predictors", open=True, multiple=True),
             ui.div(
@@ -257,6 +260,72 @@ def predicciones_server(input, output, session):
             if var_id in input and input[var_id]():
                 selected.append(name)
         return sorted(set(selected))
+    @output
+    @render.ui
+    def max_preds_line():
+        # Si no estás en el panel 2, no muestres nada (evitas invalidaciones innecesarias)
+        if current_step.get() != 2:
+            return ui.div()
+
+        m = max_num_predictions()
+        txt = "—" if m is None else str(m)
+
+        return ui.tags.div(
+            ui.tags.span("Número máximo de predicciones: ", style="font-weight:600;"),
+            ui.tags.span(txt),
+            style="margin-top:4px;",
+        )
+
+    @reactive.Calc
+    def max_num_predictions():
+        target_var = target_var_rv.get()
+        if not target_var:
+            return None
+
+        target_meta = cache.get_meta(target_var) or {}
+        tgt_temp = target_meta.get("temporalidad")
+
+        target_start, target_end = cache.get_date_range(target_var)
+        if target_end is None or tgt_temp is None:
+            return None
+
+        preds = selected_predictors()
+        if not preds:
+            return None  # si no hay predictoras seleccionadas
+
+        # Para varias predictoras: nos quedamos con el END más pequeño
+        min_pred_end = None
+
+        for p in preds:
+            p_meta = cache.get_meta(p) or {}
+            compat, _reason = compatibilidad_con_objetivo(
+                predictor_name=p,
+                predictor_meta=p_meta,
+                target_name=target_var,
+                target_meta=target_meta,
+                target_start=target_start,
+                target_end=target_end,
+                cache=cache,
+            )
+            # Si alguna seleccionada no es compatible, no podemos garantizar el horizonte común
+            if not compat:
+                return 0
+
+            _p_start, p_end = cache.get_date_range(p)
+            if p_end is None:
+                return 0
+
+            if min_pred_end is None or _to_date(p_end) < _to_date(min_pred_end):
+                min_pred_end = p_end
+
+        if min_pred_end is None:
+            return 0
+
+        n = diff_en_temporalidad(target_end, min_pred_end, tgt_temp)
+        if n is None:
+            return None
+
+        return max(0, n)
 
     @reactive.Effect
     def _sync_predictors_rv():
@@ -470,11 +539,39 @@ def predicciones_server(input, output, session):
     last_sig_rv = reactive.Value(None)
 
     @reactive.calc
+    def max_preds_available():
+        m = max_num_predictions()  # viene del panel 2
+        if m is None:
+            return 0
+        try:
+            return max(0, int(m))
+        except Exception:
+            return 0
+
+    @reactive.calc
+    def pred_horizon():
+        """
+        Valor elegido en el slider, acotado a [1, max_preds_available()].
+        Devuelve 0 si no hay horizonte posible (max<1).
+        """
+        m = max_preds_available()
+        if m < 1:
+            return 0
+
+        if "pred_horizon" not in input:
+            return 1
+
+        v = input.pred_horizon()
+        try:
+            v = int(v)
+        except Exception:
+            v = 1
+
+        return min(max(v, 1), m)
+
+
+    @reactive.calc
     def pred_signature():
-        """
-        Firma del estado de inputs que afecta a la predicción.
-        Si cambia, invalidamos resultados para no mostrar predicciones antiguas.
-        """
         if current_step.get() != 4:
             return None
 
@@ -482,9 +579,11 @@ def predicciones_server(input, output, session):
         exogs = tuple(exog_selected() or [])
         target = target_var_rv.get()
         filters = selected_filters_by_var()
+        horizon = pred_horizon()
 
-        # filters puede ser dict/list -> lo convertimos a str estable
-        return (model, target, exogs, repr(filters))
+        return (model, target, exogs, repr(filters), horizon)
+
+
 
     @reactive.effect
     def _invalidate_prediction_when_inputs_change():
@@ -514,6 +613,12 @@ def predicciones_server(input, output, session):
             pred_results_rv.set(None)
             return
 
+        horizon = pred_horizon()  # debe devolver int >=1 o 0 si no hay horizonte posible
+        if horizon < 1:
+            pred_results_rv.set(None)
+            last_sig_rv.set(pred_signature())
+            return
+        
         model = selected_model()
         predictors_used = exog_selected()
 
@@ -526,7 +631,10 @@ def predicciones_server(input, output, session):
                 "train_ratio": 0.70,
                 "auto_params": True,
                 "s": 12,
-                "return_df": True
+                "return_df": True,
+
+                # NUEVO
+                "horizon": horizon,
             }
 
             resp = sarimax_run(payload)
@@ -541,19 +649,27 @@ def predicciones_server(input, output, session):
             n_train = resp["n_train"]
             n_test = resp["n_test"]
 
-            test = df.iloc[n_train:n_train + n_test]
+            n_plot = min(int(horizon), int(n_test))
+            horizon = pred_horizon()  # del slider
+            df = pd.DataFrame(resp["df"]) if resp.get("df") else None
 
-            pred_vals = resp["y_pred"]
-            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
-            
+            n_obs = resp["n_obs"]              # histórico con y
+            h = resp["horizon"]                # horizon efectivo aplicado en backend (debería igualar al slider)
+
+            future = df.iloc[n_obs:n_obs + h]  # filas futuras (donde y es NaN)
+            pred_vals = resp["y_forecast"]     # <- FUTURO
+
+            pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
+
+
             fig = plot_predictions(
                 df=df,
-                pred=pred_test,
+                pred=pred_series,
                 title="Predicciones SARIMAX",
                 ylabel="Valores",
                 xlabel="Fecha",
                 column_y=y_col,
-                periodos_a_predecir=n_test,
+                periodos_a_predecir=h,
                 holidays_col=None
             )
 
@@ -572,17 +688,17 @@ def predicciones_server(input, output, session):
         elif model == "xgboost":
             payload = {
                 "target_var": target_var_rv.get(),
-                "predictors": predictors_used,
+                "predictors": list(predictors_used or []),
                 "filters_by_var": selected_filters_by_var(),
                 "train_ratio": 0.70,
 
-                # XGBoost
                 "auto_params": True,
                 "use_target_lags": True,
                 "max_lag": 12,
                 "recursive_forecast": True,
+                "return_df": True,
 
-                "return_df": True
+                "horizon": int(horizon),
             }
 
             resp = xgboost_run(payload)
@@ -594,22 +710,21 @@ def predicciones_server(input, output, session):
                 return
 
             y_col = resp["y_col"]
-            n_train = resp["n_train"]
-            n_test = resp["n_test"]
+            n_obs = resp["n_obs"]          # histórico con y (backend)
+            h = resp["horizon"]            # horizonte efectivo
+            future = df.iloc[n_obs:n_obs + h]
 
-            test = df.iloc[n_train:n_train + n_test]
-
-            pred_vals = resp["y_pred"]
-            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
+            pred_vals = resp["y_forecast"]
+            pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
 
             fig = plot_predictions(
                 df=df,
-                pred=pred_test,
+                pred=pred_series,
                 title="Predicciones XGBoost",
                 ylabel="Valores",
                 xlabel="Fecha",
                 column_y=y_col,
-                periodos_a_predecir=n_test,
+                periodos_a_predecir=h,
                 holidays_col=None
             )
 
@@ -622,7 +737,9 @@ def predicciones_server(input, output, session):
                 "xgb_params": resp.get("xgb_params"),
                 "feature_cols": resp.get("feature_cols"),
                 "predictors_used": predictors_used,
+                "horizon": h,
             })
+
 
         # Guarda la firma del estado con el que se calculó (para invalidar si cambian inputs)
         last_sig_rv.set(pred_signature())
@@ -651,6 +768,8 @@ def predicciones_server(input, output, session):
         selected = exog_selected()
         model = selected_model()
 
+        m = max_preds_available()
+        h = pred_horizon()
         # OJO: ahora NO usamos selected_results(); usamos el almacén
         res = pred_results_rv.get()
 
@@ -676,6 +795,22 @@ def predicciones_server(input, output, session):
                 "Variables exógenas (activar/desactivar)",
                 choices=choices,
                 selected=selected,
+            ),
+            (
+                ui.input_slider(
+                    "pred_horizon",
+                    "Valores a predecir",
+                    min=1,
+                    max=m,
+                    value=(h if h >= 1 else 1),
+                    step=1,
+                )
+                if m >= 1
+                else ui.tags.div(
+                    ui.tags.span("Valores a predecir: ", style="font-weight:600;"),
+                    ui.tags.span("— (selecciona exógenas compatibles para habilitar el horizonte)"),
+                    style="margin-top: 10px;",
+                )
             ),
 
             ui.input_action_button(

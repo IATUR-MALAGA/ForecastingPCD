@@ -19,10 +19,17 @@ def _get(path: str, params: Optional[dict] = None) -> Any:
     r.raise_for_status()
     return r.json()
 
-def _post(path: str, payload: dict) -> Any:
-    r = _client.post(path, json=payload)
-    r.raise_for_status()
+def _post(path: str, payload: dict):
+    r = httpx.post(f"{BASE_URL}{path}", json=payload, timeout=120)
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        print("BACKEND ERROR BODY:", e.response.text)  # <-- ver detalle
+        raise
     return r.json()
+
+
+
 ################################################################################################
 # --- Wrappers DATABASE ---
 ################################################################################################

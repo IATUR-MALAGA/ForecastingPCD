@@ -14,7 +14,7 @@ def plot_predictions(
 ):
     df = df.copy()
 
-    # Si el índice no es de fechas, lo construimos a partir de anio/mes(/dia)
+    # Índice temporal
     if not isinstance(df.index, pd.DatetimeIndex):
         if {"anio", "mes"}.issubset(df.columns):
             if "dia" in df.columns:
@@ -24,21 +24,42 @@ def plot_predictions(
             df = df.set_index(idx).sort_index()
         else:
             raise ValueError("df debe tener DatetimeIndex o columnas anio/mes(/dia).")
+
+    periodos_a_predecir = int(periodos_a_predecir or 1)
+    periodos_a_predecir = max(1, min(periodos_a_predecir, len(df) - 1))
     train = df.iloc[:-periodos_a_predecir]
 
-    # Asegura que pred tenga índice de fechas (MUY recomendable)
-    # Si pred viene con índice range(...) o no-datetime, lo alineamos al final del df
+    # Alinear índice de pred al final del df (ideal si df ya incluye futuro)
     if not isinstance(pred.index, pd.DatetimeIndex):
         pred = pd.Series(pred.values, index=df.index[-len(pred):], name=getattr(pred, "name", None))
 
-    # Figura / eje nuevos SIEMPRE (evita acumulación entre renders)
     fig, ax = plt.subplots(figsize=(12, 4))
 
-    # Plot sin legend=True aquí; la ponemos una sola vez al final
+    # Train
     train[column_y].plot(ax=ax, label="Train")
-    pred.plot(ax=ax, label="Prediction")
 
-    ax.autoscale(axis='x', tight=True)
+    # Prediction (si 1 punto, scatter grande)
+    if len(pred) == 1:
+        ax.scatter(pred.index, pred.values, label="Prediction", zorder=5, s=30, color='red')
+    else:
+        pred.plot(ax=ax, label="Prediction")
+
+    # ✅ CLAVE: reescalar para que entre la predicción en el eje
+    ax.relim()
+    ax.autoscale_view()
+
+    # Padding temporal para que el último punto no quede pegado al borde
+    if isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 1:
+        dt_min, dt_max = df.index.min(), df.index.max()
+        # tamaño de paso típico (median) para monthly/daily/etc.
+        step = (df.index.to_series().diff().median())
+        if pd.isna(step) or step <= pd.Timedelta(0):
+            step = pd.Timedelta(days=30)  # fallback razonable
+        pad = step * 2  # 2 pasos de margen
+        ax.set_xlim(dt_min - pad, dt_max + pad)
+    else:
+        ax.set_xlim(df.index.min(), df.index.max())
+
     ax.set(xlabel=xlabel, ylabel=ylabel)
     ax.set_title(title)
 
@@ -50,14 +71,12 @@ def plot_predictions(
         for x in holidays_pred.index:
             ax.axvline(x=x, color='k', alpha=0.3)
 
-    # (Opcional) Deduplicar por si algo añade líneas extra
     handles, labels = ax.get_legend_handles_labels()
     uniq = OrderedDict()
     for h, l in zip(handles, labels):
         if l and l != "_nolegend_" and l not in uniq:
             uniq[l] = h
     ax.legend(uniq.values(), uniq.keys(), loc="best")
-    print(train)
-    print(pred)
+
     fig.tight_layout()
-    return fig   # <-- devuelve figura (más cómodo para Shiny)
+    return fig

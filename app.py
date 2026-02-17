@@ -6,6 +6,7 @@ from front.modules.predicciones.ui import predicciones_ui
 from front.modules.predicciones.server import predicciones_server
 #from front.modules.carga_generacion.ui import carga_generacion_ui
 #from front.modules.carga_generacion.server import carga_generacion_server
+from project_config import get_config
 app_ui = ui.page_fluid(
     ui.tags.head(
         ui.tags.link(rel="stylesheet", href="images/styles.css"),
@@ -14,7 +15,7 @@ app_ui = ui.page_fluid(
     ui.div(
         ui.div(
             ui.img(src="images/logo_sicuma.png", height="60px", class_="logo-img"),
-            ui.h1("Sistema de Predicción de Turismo"),
+            ui.h1(get_config("frontend.shiny.title")),
             ui.p("Nuestro enfoque imagina que estamos en Noviembre de 2024"),
             class_="app-header-content"
         ),
