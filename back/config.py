@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "config.yml"
@@ -19,7 +22,6 @@ ENV_OVERRIDES: dict[str, tuple[str, Any]] = {
     "FORECASTINGPCD_DB_PORT": ("db.connection.port", int),
     "FORECASTINGPCD_DB_NAME": ("db.connection.dbname", str),
     "FORECASTINGPCD_DB_USER": ("db.connection.user", str),
-    "FORECASTINGPCD_DB_PASSWORD": ("db.connection.password", str),
 }
 
 REQUIRED_PATHS: dict[str, type] = {
@@ -134,6 +136,7 @@ def _normalize_paths(config: dict[str, Any]) -> dict[str, Any]:
 @dataclass(frozen=True)
 class Settings:
     data: dict[str, Any]
+    config_path: Path
 
     def get(self, path: str, default: Any = None) -> Any:
         value: Any = self.data
@@ -145,10 +148,13 @@ class Settings:
 
 
 def load_config() -> Settings:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"No existe archivo de configuración: {CONFIG_PATH}")
+    config_path = CONFIG_PATH.resolve()
+    logger.info("Loading configuration from %s", config_path)
 
-    with CONFIG_PATH.open("r", encoding="utf-8") as f:
+    if not config_path.exists():
+        raise FileNotFoundError(f"No existe archivo de configuración: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as f:
         parsed = yaml.safe_load(f) or {}
 
     if not isinstance(parsed, dict):
@@ -158,7 +164,7 @@ def load_config() -> Settings:
     parsed = _normalize_paths(parsed)
     _validate_required(parsed)
     _validate_constraints(parsed)
-    return Settings(data=parsed)
+    return Settings(data=parsed, config_path=config_path)
 
 
 settings = load_config()
