@@ -1,57 +1,69 @@
-# Configuración general del proyecto ForecastingPCD
-# Este archivo centraliza parámetros actualmente usados en back y front.
+# ==========================
+# ForecastingPCD - Configuración única
+# ==========================
 
 app:
   name: "ForecastingPCD"
   environment: "development"
 
-backend:
-  api:
-    host: "0.0.0.0"
-    port: 8000
-    prefix: "/api"
-    title: "Back API"
-    version: "0.1.0"
-    cors:
-      allow_origins:
-        - "*"
-      allow_credentials: true
-      allow_methods:
-        - "*"
-      allow_headers:
-        - "*"
+server:
+  host: "0.0.0.0"
+  port: 8000
+  api_prefix: "/api"
+  title: "Back API"
+  version: "0.1.0"
+  cors:
+    allow_origins: ["*"]
+    allow_credentials: true
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+  routes:
+    database_prefix: "/database"
+    sarimax_prefix: "/models/sarimax"
+    xgboost_prefix: "/models/xgboost"
 
-frontend:
-  shiny:
-    host: "0.0.0.0"
-    port: 8001
-    title: "Sistema de Predicción de Turismo"
-  back_api:
-    # Equivalente a BACK_API_URL en front/utils/back_api_wrappers.py
-    base_url: "http://127.0.0.1:8000"
-    timeout_seconds: 600
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
-database:
+paths:
+  # Se resuelven relativo a la raíz del repositorio si no son absolutos.
+  root: "."
+  logs_dir: "logs"
+
+# Credenciales sensibles: usar variables de entorno.
+# Overrides soportados:
+# - FORECASTINGPCD_DB_HOST
+# - FORECASTINGPCD_DB_PORT
+# - FORECASTINGPCD_DB_NAME
+# - FORECASTINGPCD_DB_USER
+# - FORECASTINGPCD_DB_PASSWORD
+# - FORECASTINGPCD_SERVER_HOST
+# - FORECASTINGPCD_SERVER_PORT
+# - FORECASTINGPCD_APP_ENV
+
+db:
   default_schema: "IA"
+  identifier_regex: "^[A-Za-z_][A-Za-z0-9_]*$"
   connection:
     host: "alcazaba2.uma.es"
     port: 5432
     dbname: "unibigdata"
-    user: "unibigdata"
-    password: "unibigdata"
+    user: ""
+    password: ""
 
 models:
   common:
     train_ratio: 0.70
     return_df: true
+    min_historical_rows: 3
+    horizon: 1
 
   sarimax:
     auto_params: true
     seasonal_period_s: 12
-    # Se usan solo cuando auto_params=false
     default_order: [0, 1, 0]
     default_seasonal_order: [0, 0, 0, 12]
-    # Si se detecta granularidad diaria, se añaden términos de Fourier anuales
     fourier:
       enabled_when_daily: true
       k: 6
@@ -67,7 +79,6 @@ models:
       objective: "reg:squarederror"
       tree_method: "hist"
       n_jobs: 1
-    # Parámetros por defecto cuando auto_params=false
     default_params:
       n_estimators: 400
       max_depth: 6
@@ -78,17 +89,35 @@ models:
       reg_lambda: 1.0
       reg_alpha: 0.0
 
-    # Espacio de búsqueda de hiperparámetros para RandomizedSearchCV
-    tuning:
-      n_iter: 20
-      cv_splits: 3
-      scoring: "neg_root_mean_squared_error"
-      param_grid:
-        n_estimators: [100, 200, 400]
-        max_depth: [2, 3, 4, 5]
-        min_child_weight: [1, 5, 10]
-        learning_rate: [0.03, 0.05, 0.1]
-        subsample: [0.7, 0.9, 1.0]
-        colsample_bytree: [0.7, 0.9, 1.0]
-        reg_lambda: [0.0, 1.0, 5.0]
-        reg_alpha: [0.0, 0.1, 1.0]
+# Sección frontend (se mantiene por compatibilidad con app.py/front)
+frontend:
+  shiny:
+    host: "0.0.0.0"
+    port: 8001
+    title: "Sistema de Predicción de Turismo"
+  back_api:
+    base_url: "http://127.0.0.1:8000"
+    timeout_seconds: 600
+
+# Compatibilidad con llaves históricas usadas fuera del backend API
+backend:
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    prefix: "/api"
+    title: "Back API"
+    version: "0.1.0"
+    cors:
+      allow_origins: ["*"]
+      allow_credentials: true
+      allow_methods: ["*"]
+      allow_headers: ["*"]
+
+database:
+  default_schema: "IA"
+  connection:
+    host: "alcazaba2.uma.es"
+    port: 5432
+    dbname: "unibigdata"
+    user: ""
+    password: ""
