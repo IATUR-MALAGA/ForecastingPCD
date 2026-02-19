@@ -1,10 +1,5 @@
-# ==========================
-# ForecastingPCD - Configuración única
-# ==========================
-
 app:
   name: "ForecastingPCD"
-  environment: "development"
 
 server:
   host: "0.0.0.0"
@@ -31,16 +26,6 @@ paths:
   root: "."
   logs_dir: "logs"
 
-# Credenciales sensibles: usar variables de entorno.
-# Overrides soportados:
-# - FORECASTINGPCD_DB_HOST
-# - FORECASTINGPCD_DB_PORT
-# - FORECASTINGPCD_DB_NAME
-# - FORECASTINGPCD_DB_USER
-# - FORECASTINGPCD_DB_PASSWORD
-# - FORECASTINGPCD_SERVER_HOST
-# - FORECASTINGPCD_SERVER_PORT
-# - FORECASTINGPCD_APP_ENV
 
 db:
   default_schema: "IA"
@@ -57,8 +42,8 @@ db:
     host: "alcazaba2.uma.es"
     port: 5432
     dbname: "unibigdata"
-    user: ""
-    password: ""
+    user: "unibigdata"
+    password: "unibigdata"
     connect_timeout: 10
 
 models:
@@ -166,12 +151,3 @@ backend:
       allow_credentials: true
       allow_methods: ["*"]
       allow_headers: ["*"]
-
-database:
-  default_schema: "IA"
-  connection:
-    host: "alcazaba2.uma.es"
-    port: 5432
-    dbname: "unibigdata"
-    user: ""
-    password: ""

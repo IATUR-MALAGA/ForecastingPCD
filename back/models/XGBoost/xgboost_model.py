@@ -85,7 +85,7 @@ def predict_xgboost(
 def best_xgboost_params(
     df: pd.DataFrame,
     exog_cols: Optional[List[str]],
-    column_y: str = settings.get("models.xgboost.target_column", "turistas"),
+    column_y: str = settings.get("models.xgboost.target_column",""),
     periodos_a_predecir: int = int(settings.get("models.xgboost.auto_search.periodos_a_predecir", 2)),
     random_state: int = int(settings.get("models.xgboost.random_state", 42)),
 ) -> Dict[str, Any]:

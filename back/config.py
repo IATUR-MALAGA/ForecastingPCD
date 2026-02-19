@@ -15,7 +15,6 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "config.yml"
 
 ENV_OVERRIDES: dict[str, tuple[str, Any]] = {
-    "FORECASTINGPCD_APP_ENV": ("app.environment", str),
     "FORECASTINGPCD_SERVER_HOST": ("server.host", str),
     "FORECASTINGPCD_SERVER_PORT": ("server.port", int),
     "FORECASTINGPCD_DB_HOST": ("db.connection.host", str),
