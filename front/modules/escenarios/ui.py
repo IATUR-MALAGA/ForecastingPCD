@@ -1,4 +1,4 @@
-from shiny import ui, module
+from shiny import module, ui
 
 
 @module.ui
@@ -10,7 +10,6 @@ def escenarios_ui():
             ui.output_ui("step_panel_2"),
             ui.output_ui("step_panel_3"),
             ui.output_ui("step_panel_4"),
-            ui.output_ui("step_panel_5"),
             class_="wizard-container",
         ),
     )
