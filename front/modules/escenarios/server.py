@@ -9,9 +9,9 @@ from front.utils.back_api_wrappers import (
 from front.utils.utils import (
     ICON_SVG_INFO,
     PrediccionesCache,
-    _fmt,
-    _group_by_category,
-    _stable_id,
+    fmt,
+    group_by_category,
+    stable_id,
     _to_date,
     build_name_to_table,
     compatibilidad_con_objetivo,
@@ -52,7 +52,7 @@ def escenarios_server(input, output, session):
     def step_panel_1():
         if current_step.get() != 1:
             return ui.div()
-        grouped = _group_by_category(catalog_entries)
+        grouped = group_by_category(catalog_entries)
         all_names = [n for names in grouped.values() for n in names]
         if target_var_rv.get() is None and all_names:
             target_var_rv.set(all_names[0])
@@ -62,7 +62,7 @@ def escenarios_server(input, output, session):
         for cat, names in grouped.items():
             btns = []
             for name in names:
-                btn_id = _stable_id("esc_target", name)
+                btn_id = stable_id("esc_target", name)
                 if btn_id not in _registered_pick_handlers:
                     _registered_pick_handlers.add(btn_id)
 
@@ -90,11 +90,11 @@ def escenarios_server(input, output, session):
 
     @reactive.Calc
     def predictor_pairs():
-        grouped = _group_by_category(catalog_entries, exclude_name=target_var_rv.get())
+        grouped = group_by_category(catalog_entries, exclude_name=target_var_rv.get())
         pairs = []
         for _, names in grouped.items():
             for name in names:
-                pairs.append((_stable_id("esc_pred", name), name))
+                pairs.append((stable_id("esc_pred", name), name))
         return pairs
 
     @reactive.Calc
@@ -137,7 +137,7 @@ def escenarios_server(input, output, session):
         if current_step.get() != 2:
             return ui.div()
         target = target_var_rv.get()
-        grouped = _group_by_category(catalog_entries, exclude_name=target)
+        grouped = group_by_category(catalog_entries, exclude_name=target)
         target_meta = cache.get_meta(target) if target else {}
         ts, te = cache.get_date_range(target) if target else (None, None)
 
@@ -145,7 +145,7 @@ def escenarios_server(input, output, session):
         for cat, names in grouped.items():
             blocks = []
             for name in names:
-                var_id = _stable_id("esc_pred", name)
+                var_id = stable_id("esc_pred", name)
                 meta = cache.get_meta(name)
                 ok, reason = compatibilidad_con_objetivo(name, meta, target, target_meta, ts, te, cache)
                 info_icon = ui.tooltip(ui.tags.span(ui.HTML(ICON_SVG_INFO)), reason) if (not ok and reason) else None
@@ -206,7 +206,7 @@ def escenarios_server(input, output, session):
             pretty, table = item["pretty"], item["table"]
             selected = []
             for f in cache.get_filters(table):
-                input_id = _stable_id("esc_flt", f"{f['table']}__{f['col']}")
+                input_id = stable_id("esc_flt", f"{f['table']}__{f['col']}")
                 vals = input[input_id]() if input_id in input else None
                 if vals:
                     selected.append({"table": f["table"], "col": f["col"], "values": list(vals)})
@@ -222,7 +222,7 @@ def escenarios_server(input, output, session):
         for item in vars_to_config():
             controls = []
             for f in cache.get_filters(item["table"]):
-                input_id = _stable_id("esc_flt", f"{f['table']}__{f['col']}")
+                input_id = stable_id("esc_flt", f"{f['table']}__{f['col']}")
                 controls.append(ui.input_selectize(input_id, f.get("label") or f["col"], choices=cache.get_distinct("IA", f["table"], f["col"]), multiple=True))
             panels.append(ui.accordion_panel(item["pretty"], ui.div(*controls), value=_slug(item["table"])))
 
@@ -301,7 +301,7 @@ def escenarios_server(input, output, session):
         exogs = list(input.esc_scn_exogs() if "esc_scn_exogs" in input else [])
         blocks = []
         for ex in exogs:
-            sid = _stable_id("esc_ov", ex)
+            sid = stable_id("esc_ov", ex)
             blocks.append(ui.card(
                 ui.h5(ex),
                 ui.input_select(f"{sid}_op", "Operación", choices={"set": "set", "add": "add", "mul": "mul", "pct": "pct"}, selected="pct"),
@@ -314,7 +314,7 @@ def escenarios_server(input, output, session):
     def _build_overrides():
         out = []
         for ex in list(input.esc_scn_exogs() if "esc_scn_exogs" in input else []):
-            sid = _stable_id("esc_ov", ex)
+            sid = stable_id("esc_ov", ex)
             op = input[f"{sid}_op"]() if f"{sid}_op" in input else "pct"
             value = input[f"{sid}_value"]() if f"{sid}_value" in input else 0.0
             start = input[f"{sid}_start"]() if f"{sid}_start" in input else ""
