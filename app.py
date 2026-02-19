@@ -1,7 +1,7 @@
 from pathlib import Path
 from shiny import App, ui, module
-#from front.modules.escenarios.ui import escenarios_ui
-#from front.modules.escenarios.server import escenarios_server
+from front.modules.escenarios.ui import escenarios_ui
+from front.modules.escenarios.server import escenarios_server
 from front.modules.predicciones.ui import predicciones_ui
 from front.modules.predicciones.server import predicciones_server
 #from front.modules.carga_generacion.ui import carga_generacion_ui
@@ -27,10 +27,10 @@ app_ui = ui.page_fluid(
             "Predicciones",
             predicciones_ui("predicciones"),
         ),
-        #ui.nav_panel(
-        #    "Escenarios",
-        #    escenarios_ui("escenarios"),
-        #),
+        ui.nav_panel(
+            "Escenarios",
+            escenarios_ui("escenarios"),
+        ),
         # ui.nav_panel(
         #     "Carga y Generación de Datos",
         #     carga_generacion_ui("carga_generacion"),
@@ -42,7 +42,7 @@ app_ui = ui.page_fluid(
 def server(input, output, session):
     # Llamar al servidor del módulo de predicciones
     predicciones_server("predicciones"),
-    #escenarios_server("escenarios"),
+    escenarios_server("escenarios"),
     #carga_generacion_server("carga_generacion")
 
 
