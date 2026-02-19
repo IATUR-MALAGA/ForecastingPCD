@@ -66,3 +66,6 @@ def sarimax_run(payload: dict) -> dict:
 def xgboost_run(payload: dict) -> dict:
     return _post("/api/models/xgboost/run", payload)
  
+
+def escenarios_run(payload: dict) -> dict:
+    return _post("/api/models/scenarios/run", payload)
