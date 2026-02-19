@@ -264,16 +264,35 @@ def escenarios_server(input, output, session):
                     rows.append({"var": ex, "date": d.strftime("%Y-%m-%d")})
         return {"rows": rows, "horizon": len(needed), "max_exog_date": max_exog}
 
-    def _build_past_overrides(window_start: str, window_end: str):
-        out = []
+    def _build_past_overrides_per_date():
+        info = base_info_rv.get()
+        if not info:
+            return []
+
+        ws = info.get("window", {}).get("start")
+        we = info.get("window", {}).get("end")
+        if not ws or not we:
+            return []
+
+        dfb = info.get("df_slice", pd.DataFrame()).copy()
+        if dfb.empty or "Fecha" not in dfb.columns:
+            return []
+
+        dfb["Fecha"] = pd.to_datetime(dfb["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
+        dfb = dfb.dropna(subset=["Fecha"])
+
+        overrides = []
         for ex in list(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else []):
-            sid = stable_id("esc_past_ov", ex)
-            op = input[f"{sid}_op"]() if f"{sid}_op" in input else "set"
-            val = input[f"{sid}_value"]() if f"{sid}_value" in input else None
-            if val is None:
+            if ex not in dfb.columns:
                 continue
-            out.append({"var": ex, "op": op, "value": float(val), "start": window_start, "end": window_end})
-        return out
+            for _, row in dfb[["Fecha", ex]].iterrows():
+                date = row["Fecha"]
+                cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{date}")
+                new_val = input[cid]() if cid in input else None
+                if new_val is None:
+                    continue
+                overrides.append({"var": ex, "op": "set", "value": float(new_val), "start": date, "end": date})
+        return overrides
 
     def _build_future_values():
         out, missing = [], False
@@ -368,7 +387,10 @@ def escenarios_server(input, output, session):
         if pd.isna(start_dt) or pd.isna(end_dt) or start_dt > end_dt:
             ui.notification_show("Rango pasado inválido: revisa inicio y fin.", type="warning")
             return
-        overrides = _build_past_overrides(start, end)
+        if base_info_rv.get() is None:
+            ui.notification_show("Primero carga valores base (pasado).", type="warning")
+            return
+        overrides = _build_past_overrides_per_date()
         runner = MODEL_RUNNERS.get(esc_selected_model())
         payload = {
             "target_var": target_var_rv.get(),
@@ -454,9 +476,9 @@ def escenarios_server(input, output, session):
             ui.input_text("esc_past_start", "Inicio ventana pasada (YYYY-MM-DD)", ""),
             ui.input_text("esc_past_end", "Fin ventana pasada (YYYY-MM-DD)", ""),
             ui.input_checkbox_group("esc_past_edit_exogs", "Exógenas a modificar", choices=esc_active_exogs(), selected=[]),
-            ui.output_ui("esc_past_overrides_ui"),
             ui.input_action_button("esc_load_base_past", "Cargar valores base (pasado)"),
             ui.output_ui("esc_base_info_ui"),
+            ui.output_ui("esc_past_values_editor_ui"),
             ui.input_action_button("esc_calc_past", "Calcular escenario", class_="btn-primary"),
         )
 
@@ -475,11 +497,58 @@ def escenarios_server(input, output, session):
 
     @output
     @render.ui
-    def esc_past_overrides_ui():
+    def esc_past_values_editor_ui():
+        info = base_info_rv.get()
+        if not info:
+            return ui.p("Carga valores base (pasado) para editar por fecha.")
+
+        dfb = info.get("df_slice", pd.DataFrame()).copy()
+        if dfb.empty or "Fecha" not in dfb.columns:
+            return ui.p("No hay datos base en la ventana seleccionada.")
+
+        selected_exogs = list(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else [])
+        if not selected_exogs:
+            return ui.p("Selecciona exógenas a modificar para editar nuevos valores por fecha.")
+
+        ws = info.get("window", {}).get("start")
+        we = info.get("window", {}).get("end")
+        dfb["Fecha"] = pd.to_datetime(dfb["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
+        dfb = dfb.dropna(subset=["Fecha"])
+
         blocks = []
-        for ex in list(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else []):
-            sid = stable_id("esc_past_ov", ex)
-            blocks.append(ui.card(ui.h5(ex), ui.input_select(f"{sid}_op", "Operación", choices={"set": "set", "add": "add", "mul": "mul", "pct": "pct"}, selected="set"), ui.input_numeric(f"{sid}_value", "Valor", value=0.0)))
+        for ex in selected_exogs:
+            if ex not in dfb.columns:
+                continue
+
+            rows = [
+                ui.tags.tr(
+                    ui.tags.th("Fecha"),
+                    ui.tags.th("Valor base"),
+                    ui.tags.th("Nuevo valor"),
+                )
+            ]
+            for _, row in dfb[["Fecha", ex]].iterrows():
+                date = row["Fecha"]
+                base_val = pd.to_numeric(row[ex], errors="coerce")
+                cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{date}")
+                input_value = None if pd.isna(base_val) else float(base_val)
+                rows.append(
+                    ui.tags.tr(
+                        ui.tags.td(date),
+                        ui.tags.td(fmt(base_val)),
+                        ui.tags.td(ui.input_numeric(cid, "", value=input_value)),
+                    )
+                )
+
+            blocks.append(
+                ui.card(
+                    ui.h5(ex),
+                    ui.tags.table(ui.tags.thead(rows[0]), ui.tags.tbody(*rows[1:]), class_="table table-sm"),
+                )
+            )
+
+        if not blocks:
+            return ui.p("No hay exógenas seleccionadas con datos base en la ventana.")
         return ui.div(*blocks)
 
     @output
