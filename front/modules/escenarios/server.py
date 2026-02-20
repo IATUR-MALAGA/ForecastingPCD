@@ -1,3 +1,4 @@
+from tracemalloc import start
 import pandas as pd
 from shiny import module, reactive, render, ui
 
@@ -231,6 +232,48 @@ def escenarios_server(input, output, session):
         target_meta = cache.get_meta(target_var_rv.get()) or {}
         return str(target_meta.get("temporalidad", "")).lower()
 
+    def _is_monthly(temp: str) -> bool:
+        t = (temp or "").lower()
+        # ajusta si en tu catálogo se usa "mensual" / "mes" / etc.
+        return ("mes" in t) or ("mens" in t) or ("monthly" in t)
+
+    def _granularity(temp: str) -> str:
+        # Esto SÍ está bien para date_range
+        return "MS" if _is_monthly(temp) else "D"
+
+    def _parse_user_dt(txt: str, temp: str) -> pd.Timestamp:
+        s = (txt or "").strip()
+        if not s:
+            return pd.NaT
+        if _is_monthly(temp) and len(s) == 7 and s[4] == "-":  # YYYY-MM
+            s = f"{s}-01"
+        dt = pd.to_datetime(s, errors="coerce")
+        if pd.isna(dt):
+            return pd.NaT
+        # 👇 aquí el fix
+        return dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
+
+    def _normalize_dt_series(x, temp: str) -> pd.Series:
+        s = pd.to_datetime(x, errors="coerce")
+        if _is_monthly(temp):
+            # 👇 aquí el fix
+            return s.dt.to_period("M").dt.to_timestamp(how="start")
+        return s.dt.normalize()
+
+    def _dt_key(dt: pd.Timestamp, temp: str) -> str:
+        if pd.isna(dt):
+            return ""
+        # 👇 aquí el fix
+        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
+        return d.strftime("%Y-%m-%d")
+
+    def _dt_label(dt: pd.Timestamp, temp: str) -> str:
+        if pd.isna(dt):
+            return ""
+        # 👇 aquí el fix
+        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
+        return d.strftime("%Y-%m") if _is_monthly(temp) else d.strftime("%Y-%m-%d")
+
     @reactive.Calc
     def target_end_date():
         _, end = cache.get_date_range(target_var_rv.get())
@@ -240,29 +283,42 @@ def escenarios_server(input, output, session):
     def future_requirements():
         mode = input.esc_scenario_mode() if "esc_scenario_mode" in input else "future"
         if mode != "future":
-            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT}
-        until_txt = (input.esc_future_until() if "esc_future_until" in input else "") or ""
-        until_dt = pd.to_datetime(until_txt, errors="coerce")
-        t_end = target_end_date()
-        if pd.isna(until_dt) or pd.isna(t_end):
-            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT}
+            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT, "temp": target_temporalidad()}
 
-        freq = "MS" if "mes" in target_temporalidad() else "D"
+        temp = target_temporalidad()
+
+        until_txt = (input.esc_future_until() if "esc_future_until" in input else "") or ""
+        until_dt = _parse_user_dt(until_txt, temp)
+
+        t_end = target_end_date()
+        t_end = _parse_user_dt(t_end.strftime("%Y-%m-%d") if not pd.isna(t_end) else "", temp)
+
+        if pd.isna(until_dt) or pd.isna(t_end):
+            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT, "temp": temp}
+
+        freq = _granularity(temp)
         first = t_end + (pd.offsets.MonthBegin(1) if freq == "MS" else pd.Timedelta(days=1))
+        first = _parse_user_dt(first.strftime("%Y-%m-%d"), temp)
+
         needed = pd.date_range(start=first, end=until_dt, freq=freq)
         if len(needed) < 1:
-            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT}
+            return {"rows": [], "horizon": 0, "max_exog_date": pd.NaT, "temp": temp}
 
         rows, max_exog = [], pd.NaT
         for ex in esc_active_exogs():
             _, ex_end = cache.get_date_range(ex)
-            ex_end_dt = pd.to_datetime(ex_end, errors="coerce") if ex_end else pd.NaT
+            ex_end_dt = _parse_user_dt(ex_end or "", temp)
+
             if pd.isna(max_exog) or (not pd.isna(ex_end_dt) and ex_end_dt > max_exog):
                 max_exog = ex_end_dt
+
             for d in needed:
-                if pd.isna(ex_end_dt) or d > ex_end_dt:
-                    rows.append({"var": ex, "date": d.strftime("%Y-%m-%d")})
-        return {"rows": rows, "horizon": len(needed), "max_exog_date": max_exog}
+                d0 = _parse_user_dt(pd.to_datetime(d).strftime("%Y-%m-%d"), temp)
+                if pd.isna(ex_end_dt) or d0 > ex_end_dt:
+                    rows.append({"var": ex, "date": _dt_key(d0, temp), "label": _dt_label(d0, temp)})
+
+        return {"rows": rows, "horizon": len(needed), "max_exog_date": max_exog, "temp": temp}
+
 
     def _build_past_overrides_per_date():
         info = base_info_rv.get()
@@ -281,18 +337,36 @@ def escenarios_server(input, output, session):
         dfb["Fecha"] = pd.to_datetime(dfb["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
         dfb = dfb.dropna(subset=["Fecha"])
 
+        dates_all = sorted(set(dfb["Fecha"].tolist()))
+        selected_dates = list(input.esc_past_edit_dates() if "esc_past_edit_dates" in input else dates_all)
+        selected_dates = [d for d in selected_dates if d in dates_all]
+        if not selected_dates:
+            return []
+
+        dfb = dfb[dfb["Fecha"].isin(selected_dates)].copy()
+
         overrides = []
         for ex in list(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else []):
             if ex not in dfb.columns:
                 continue
+
             for _, row in dfb[["Fecha", ex]].iterrows():
                 date = row["Fecha"]
                 cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{date}")
                 new_val = input[cid]() if cid in input else None
                 if new_val is None:
                     continue
-                overrides.append({"var": ex, "op": "set", "value": float(new_val), "start": date, "end": date})
+
+                overrides.append({
+                    "var": ex,
+                    "op": "set",
+                    "value": float(new_val),
+                    "start": date,
+                    "end": date,
+                })
+
         return overrides
+
 
     def _build_future_values():
         out, missing = [], False
@@ -316,10 +390,13 @@ def escenarios_server(input, output, session):
             tuple(esc_active_exogs()),
             (input.esc_past_start() if "esc_past_start" in input else ""),
             (input.esc_past_end() if "esc_past_end" in input else ""),
+            tuple(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else []),   # <-- NUEVO
+            tuple(input.esc_past_edit_dates() if "esc_past_edit_dates" in input else []), # <-- NUEVO
             (input.esc_future_until() if "esc_future_until" in input else ""),
             repr(selected_filters_by_var()),
             target_var_rv.get(),
         )
+
 
     @reactive.Effect
     def _invalidate_scenario_on_change():
@@ -336,7 +413,10 @@ def escenarios_server(input, output, session):
     def _load_base_past():
         start = (input.esc_past_start() if "esc_past_start" in input else "") or ""
         end = (input.esc_past_end() if "esc_past_end" in input else "") or ""
-        start_dt, end_dt = pd.to_datetime(start, errors="coerce"), pd.to_datetime(end, errors="coerce")
+        temp = target_temporalidad()
+        start_dt = _parse_user_dt(start, temp)
+        end_dt = _parse_user_dt(end, temp)
+
         if pd.isna(start_dt) or pd.isna(end_dt):
             ui.notification_show("Debes indicar inicio y fin válidos (YYYY-MM-DD).", type="warning")
             return
@@ -368,6 +448,7 @@ def escenarios_server(input, output, session):
                 ui.notification_show("No se pudo cargar la base histórica para ese rango.", type="warning")
                 return
             dt = _extract_dates(df)
+            dt = _normalize_dt_series(dt, temp)
             y_col = res.get("y_col")
             keep_cols = [c for c in [*esc_active_exogs(), y_col] if c and c in df.columns]
             sl = df.copy()
@@ -420,13 +501,16 @@ def escenarios_server(input, output, session):
     @reactive.event(input.esc_calc_future)
     def _run_future_scenario():
         req = future_requirements()
+        temp = req.get("temp", target_temporalidad())
+
         until_txt = (input.esc_future_until() if "esc_future_until" in input else "") or ""
-        until_dt = pd.to_datetime(until_txt, errors="coerce")
+        until_dt = _parse_user_dt(until_txt, temp)
         if pd.isna(until_dt):
             ui.notification_show("Debes indicar una fecha objetivo futura válida.", type="warning")
             return
+
         max_exog = req["max_exog_date"]
-        if not pd.isna(max_exog) and until_dt <= max_exog:
+        if not pd.isna(max_exog) and until_dt <= _parse_user_dt(max_exog.strftime("%Y-%m-%d"), temp):
             ui.notification_show("La fecha objetivo debe ser posterior al máximo histórico de exógenas activas.", type="warning")
             return
         future_vals, missing = _build_future_values()
@@ -478,9 +562,11 @@ def escenarios_server(input, output, session):
             ui.input_checkbox_group("esc_past_edit_exogs", "Exógenas a modificar", choices=esc_active_exogs(), selected=[]),
             ui.input_action_button("esc_load_base_past", "Cargar valores base (pasado)"),
             ui.output_ui("esc_base_info_ui"),
-            ui.output_ui("esc_past_values_editor_ui"),
+            ui.output_ui("esc_past_dates_ui"),          # <-- NUEVO
+            ui.output_ui("esc_past_values_editor_ui"),  # <-- Editor usa SOLO esas fechas
             ui.input_action_button("esc_calc_past", "Calcular escenario", class_="btn-primary"),
         )
+
 
         return ui.div(
             PANEL_STYLES,
@@ -508,66 +594,85 @@ def escenarios_server(input, output, session):
 
         selected_exogs = list(input.esc_past_edit_exogs() if "esc_past_edit_exogs" in input else [])
         if not selected_exogs:
-            return ui.p("Selecciona exógenas a modificar para editar nuevos valores por fecha.")
+            return ui.p("Selecciona exógenas a modificar.")
+
+        # Fechas disponibles
+        temp = target_temporalidad()
+        dfb["Fecha_dt"] = _normalize_dt_series(dfb["Fecha"], temp)
+        dfb = dfb.dropna(subset=["Fecha_dt"])
+        dfb["Fecha"] = dfb["Fecha_dt"].dt.strftime("%Y-%m-%d")  # canónica
+
+
+        # Fechas seleccionadas por el usuario (si no hay, usa todas)
+        dates_all = sorted(set(dfb["Fecha"].tolist()))
+        selected_dates = list(input.esc_past_edit_dates() if "esc_past_edit_dates" in input else dates_all)
+        selected_dates = [d for d in selected_dates if d in dates_all]
+        if not selected_dates:
+            return ui.p("Selecciona al menos una fecha a modificar.")
+
+        dfb = dfb[dfb["Fecha"].isin(selected_dates)].copy()
+        dfb = dfb.sort_values("Fecha")
 
         ws = info.get("window", {}).get("start")
         we = info.get("window", {}).get("end")
-        dfb["Fecha"] = pd.to_datetime(dfb["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
-        dfb = dfb.dropna(subset=["Fecha"])
 
         blocks = []
         for ex in selected_exogs:
             if ex not in dfb.columns:
                 continue
 
-            rows = [
-                ui.tags.tr(
-                    ui.tags.th("Fecha"),
-                    ui.tags.th("Valor base"),
-                    ui.tags.th("Nuevo valor"),
-                )
-            ]
+            inputs = []
             for _, row in dfb[["Fecha", ex]].iterrows():
                 date = row["Fecha"]
                 base_val = pd.to_numeric(row[ex], errors="coerce")
                 cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{date}")
-                input_value = None if pd.isna(base_val) else float(base_val)
-                rows.append(
-                    ui.tags.tr(
-                        ui.tags.td(date),
-                        ui.tags.td(fmt(base_val)),
-                        ui.tags.td(ui.input_numeric(cid, "", value=input_value)),
+
+                label = f"{_dt_label(pd.to_datetime(date), temp)} · base={fmt(base_val)}"
+
+                default_val = None if pd.isna(base_val) else float(base_val)
+
+                inputs.append(
+                    ui.input_numeric(
+                        cid,
+                        label,
+                        value=default_val,
                     )
                 )
 
             blocks.append(
                 ui.card(
                     ui.h5(ex),
-                    ui.tags.table(ui.tags.thead(rows[0]), ui.tags.tbody(*rows[1:]), class_="table table-sm"),
+                    ui.div(*inputs),
                 )
             )
 
         if not blocks:
-            return ui.p("No hay exógenas seleccionadas con datos base en la ventana.")
+            return ui.p("No hay exógenas seleccionadas con datos base en las fechas elegidas.")
         return ui.div(*blocks)
+
 
     @output
     @render.ui
     def scenario_future_values_ui():
-        reqs = future_requirements()["rows"]
+        req = future_requirements()
+        reqs = req["rows"]
         if not reqs:
             return ui.p("No hay valores futuros requeridos para la fecha seleccionada.")
+
         blocks = [ui.p("Completa todos los valores para evitar huecos intermedios.")]
         grouped = {}
         for item in reqs:
-            grouped.setdefault(item["var"], []).append(item["date"])
-        for var, dates in grouped.items():
+            grouped.setdefault(item["var"], []).append(item)
+
+        for var, items in grouped.items():
             rows = []
-            for d in dates:
-                cid = stable_id("esc_fut_val", f"{var}__{d}")
-                rows.append(ui.input_numeric(cid, d, value=None))
+            for it in items:
+                cid = stable_id("esc_fut_val", f"{var}__{it['date']}")
+                rows.append(ui.input_numeric(cid, it.get("label", it["date"]), value=None))
             blocks.append(ui.card(ui.h5(var), ui.div(*rows)))
+
         return ui.div(*blocks)
+
 
     @output
     @render.ui
@@ -589,6 +694,39 @@ def escenarios_server(input, output, session):
         for ex in exogs:
             rows.append(ui.tags.li(f"{ex}: media base = {pd.to_numeric(df[ex], errors='coerce').mean():.3f}"))
         return ui.div(ui.p(f"Ventana base cargada: {info['window']['start']} → {info['window']['end']}"), ui.tags.ul(*rows), ui.output_data_frame("esc_base_table"))
+
+    @output
+    @render.ui
+    def esc_past_dates_ui():
+        info = base_info_rv.get()
+        if not info:
+            return ui.p("Carga valores base (pasado) para seleccionar las fechas a modificar.")
+
+        temp = target_temporalidad()
+        dfb = info.get("df_slice", pd.DataFrame()).copy()
+        if dfb.empty or "Fecha" not in dfb.columns:
+            return ui.p("No hay fechas base disponibles en la ventana seleccionada.")
+
+        dts = _normalize_dt_series(dfb["Fecha"], temp)
+        dts = [d for d in dts.tolist() if not pd.isna(d)]
+        dts = sorted(set(dts))
+        if not dts:
+            return ui.p("No hay fechas válidas en la ventana base.")
+
+        choices = {_dt_key(d, temp): _dt_label(d, temp) for d in dts}
+
+        selected = list(input.esc_past_edit_dates() if "esc_past_edit_dates" in input else list(choices.keys()))
+        selected = [d for d in selected if d in choices]
+        if not selected:
+            selected = list(choices.keys())
+
+        return ui.input_checkbox_group(
+            "esc_past_edit_dates",
+            "Fechas a modificar (meses/días)",
+            choices=choices,
+            selected=selected,
+        )
+
 
     @output
     @render.data_frame
