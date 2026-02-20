@@ -39,15 +39,23 @@ def escenarios_server(input, output, session):
 
     MODEL_RUNNERS = {"sarimax": sarimax_run, "xgboost": xgboost_run}
 
-    def _metrics_info_tooltip():
+    def _metric_info_tooltip(description: str):
         return ui.tooltip(
             ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
-            ui.tags.div(
-                ui.tags.div(ui.tags.b("MAPE:"), " Error porcentual absoluto medio (en %)."),
-                ui.tags.div(ui.tags.b("RMSE:"), " Raíz del error cuadrático medio (penaliza más los errores grandes)."),
-                ui.tags.div(ui.tags.b("MAE:"), " Error absoluto medio (promedio del error en la escala original)."),
-                style="display:grid; gap:6px; max-width:360px;",
-            ),
+            description,
+        )
+
+    def _metric_pill(label: str, value: float):
+        descriptions = {
+            "MAPE": "Error porcentual absoluto medio (en %).",
+            "RMSE": "Raíz del error cuadrático medio (penaliza más los errores grandes).",
+            "MAE": "Error absoluto medio (promedio del error en la escala original).",
+        }
+        return ui.tags.span(
+            ui.tags.span(f"{label}: {value:.3f}"),
+            _metric_info_tooltip(descriptions.get(label, "Métrica de error del modelo.")),
+            class_="selection-pill",
+            style="display:inline-flex; align-items:center; gap:6px;",
         )
 
     @output
@@ -826,13 +834,8 @@ def escenarios_server(input, output, session):
                     mod_mean = base_mean * (1.0 + (val / 100.0))
                 extras.append(ui.tags.span(f"{var}: base media={base_mean:.3f} | modificada media={mod_mean:.3f}", class_="selection-pill"))
         return ui.div(
-            ui.tags.div(
-                ui.tags.span("Métricas del escenario", style="font-weight:600;"),
-                _metrics_info_tooltip(),
-                style="display:flex; align-items:center; gap:6px; margin-bottom:6px;",
-            ),
-            ui.tags.span(f"MAPE: {res.get('mape', 0):.3f}", class_="selection-pill"),
-            ui.tags.span(f"RMSE: {res.get('rmse', 0):.3f}", class_="selection-pill"),
-            ui.tags.span(f"MAE: {res.get('mae', 0):.3f}", class_="selection-pill"),
+            _metric_pill("MAPE", float(res.get("mape", 0))),
+            _metric_pill("RMSE", float(res.get("rmse", 0))),
+            _metric_pill("MAE", float(res.get("mae", 0))),
             *extras,
         )
