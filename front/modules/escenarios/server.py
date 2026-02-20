@@ -39,6 +39,25 @@ def escenarios_server(input, output, session):
 
     MODEL_RUNNERS = {"sarimax": sarimax_run, "xgboost": xgboost_run}
 
+    def _metric_info_tooltip(description: str):
+        return ui.tooltip(
+            ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
+            description,
+        )
+
+    def _metric_pill(label: str, value: float):
+        descriptions = {
+            "MAPE": "Error porcentual absoluto medio (en %).",
+            "RMSE": "Raíz del error cuadrático medio (penaliza más los errores grandes).",
+            "MAE": "Error absoluto medio (promedio del error en la escala original).",
+        }
+        return ui.tags.span(
+            ui.tags.span(f"{label}: {value:.3f}"),
+            _metric_info_tooltip(descriptions.get(label, "Métrica de error del modelo.")),
+            class_="selection-pill",
+            style="display:inline-flex; align-items:center; gap:6px;",
+        )
+
     @output
     @render.ui
     def step_indicator():
@@ -814,4 +833,9 @@ def escenarios_server(input, output, session):
                 elif op == "pct":
                     mod_mean = base_mean * (1.0 + (val / 100.0))
                 extras.append(ui.tags.span(f"{var}: base media={base_mean:.3f} | modificada media={mod_mean:.3f}", class_="selection-pill"))
-        return ui.div(ui.tags.span(f"MAPE: {res.get('mape', 0):.3f}", class_="selection-pill"), ui.tags.span(f"RMSE: {res.get('rmse', 0):.3f}", class_="selection-pill"), ui.tags.span(f"MAE: {res.get('mae', 0):.3f}", class_="selection-pill"), *extras)
+        return ui.div(
+            _metric_pill("MAPE", float(res.get("mape", 0))),
+            _metric_pill("RMSE", float(res.get("rmse", 0))),
+            _metric_pill("MAE", float(res.get("mae", 0))),
+            *extras,
+        )

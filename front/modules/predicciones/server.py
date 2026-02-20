@@ -594,7 +594,7 @@ def predicciones_server(input, output, session):
 
     def _kpi_card(label: str, value: str):
         return ui.tags.div(
-            ui.tags.div(label, style="font-size:12px; color:#6b7280; margin-bottom:4px;"),
+            ui.tags.div(_metric_label_with_info(label), style="font-size:12px; color:#6b7280; margin-bottom:4px;"),
             ui.tags.div(value, style="font-size:20px; font-weight:700;"),
             style=(
                 "flex: 1 1 160px; padding: 10px 12px; border: 1px solid #e5e7eb; "
@@ -609,6 +609,24 @@ def predicciones_server(input, output, session):
                 "display:inline-block; padding: 3px 10px; border-radius: 999px; "
                 "background:#f3f4f6; border:1px solid #e5e7eb; font-size:12px;"
             ),
+        )
+
+    def _metric_info_tooltip(description: str):
+        return ui.tooltip(
+            ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
+            description,
+        )
+
+    def _metric_label_with_info(label: str):
+        descriptions = {
+            "MAPE": "Error porcentual absoluto medio (en %).",
+            "RMSE": "Raíz del error cuadrático medio (penaliza más los errores grandes).",
+            "MAE": "Error absoluto medio (promedio del error en la escala original).",
+        }
+        return ui.tags.div(
+            ui.tags.span(label),
+            _metric_info_tooltip(descriptions.get(label, "Métrica de error del modelo.")),
+            style="display:flex; align-items:center; gap:6px;",
         )
 
     # ------------------------
