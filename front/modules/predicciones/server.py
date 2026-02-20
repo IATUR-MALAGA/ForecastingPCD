@@ -611,6 +611,12 @@ def predicciones_server(input, output, session):
             ),
         )
 
+    METRIC_DESCRIPTIONS = {
+        "MAPE": "Error porcentual absoluto medio (en %).",
+        "RMSE": "Raíz del error cuadrático medio (penaliza más los errores grandes).",
+        "MAE": "Error absoluto medio (promedio del error en la escala original).",
+    }
+
     def _metric_info_tooltip(description: str):
         return ui.tooltip(
             ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
@@ -618,15 +624,15 @@ def predicciones_server(input, output, session):
         )
 
     def _metric_label_with_info(label: str):
-        descriptions = {
-            "MAPE": "Error porcentual absoluto medio (en %).",
-            "RMSE": "Raíz del error cuadrático medio (penaliza más los errores grandes).",
-            "MAE": "Error absoluto medio (promedio del error en la escala original).",
-        }
         return ui.tags.div(
             ui.tags.span(label),
-            _metric_info_tooltip(descriptions.get(label, "Métrica de error del modelo.")),
+            _metric_info_tooltip(METRIC_DESCRIPTIONS.get(label, "Métrica de error del modelo.")),
             style="display:flex; align-items:center; gap:6px;",
+        )
+
+    def _metrics_info_tooltip():
+        return _metric_info_tooltip(
+            "MAPE, RMSE y MAE evalúan el error del modelo desde distintas perspectivas."
         )
 
     # ------------------------
