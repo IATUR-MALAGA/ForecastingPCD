@@ -39,6 +39,17 @@ def escenarios_server(input, output, session):
 
     MODEL_RUNNERS = {"sarimax": sarimax_run, "xgboost": xgboost_run}
 
+    def _metrics_info_tooltip():
+        return ui.tooltip(
+            ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
+            ui.tags.div(
+                ui.tags.div(ui.tags.b("MAPE:"), " Error porcentual absoluto medio (en %)."),
+                ui.tags.div(ui.tags.b("RMSE:"), " Raíz del error cuadrático medio (penaliza más los errores grandes)."),
+                ui.tags.div(ui.tags.b("MAE:"), " Error absoluto medio (promedio del error en la escala original)."),
+                style="display:grid; gap:6px; max-width:360px;",
+            ),
+        )
+
     @output
     @render.ui
     def step_indicator():
@@ -814,4 +825,14 @@ def escenarios_server(input, output, session):
                 elif op == "pct":
                     mod_mean = base_mean * (1.0 + (val / 100.0))
                 extras.append(ui.tags.span(f"{var}: base media={base_mean:.3f} | modificada media={mod_mean:.3f}", class_="selection-pill"))
-        return ui.div(ui.tags.span(f"MAPE: {res.get('mape', 0):.3f}", class_="selection-pill"), ui.tags.span(f"RMSE: {res.get('rmse', 0):.3f}", class_="selection-pill"), ui.tags.span(f"MAE: {res.get('mae', 0):.3f}", class_="selection-pill"), *extras)
+        return ui.div(
+            ui.tags.div(
+                ui.tags.span("Métricas del escenario", style="font-weight:600;"),
+                _metrics_info_tooltip(),
+                style="display:flex; align-items:center; gap:6px; margin-bottom:6px;",
+            ),
+            ui.tags.span(f"MAPE: {res.get('mape', 0):.3f}", class_="selection-pill"),
+            ui.tags.span(f"RMSE: {res.get('rmse', 0):.3f}", class_="selection-pill"),
+            ui.tags.span(f"MAE: {res.get('mae', 0):.3f}", class_="selection-pill"),
+            *extras,
+        )

@@ -611,6 +611,17 @@ def predicciones_server(input, output, session):
             ),
         )
 
+    def _metrics_info_tooltip():
+        return ui.tooltip(
+            ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
+            ui.tags.div(
+                ui.tags.div(ui.tags.b("MAPE:"), " Error porcentual absoluto medio (en %)."),
+                ui.tags.div(ui.tags.b("RMSE:"), " Raíz del error cuadrático medio (penaliza más los errores grandes)."),
+                ui.tags.div(ui.tags.b("MAE:"), " Error absoluto medio (promedio del error en la escala original)."),
+                style="display:grid; gap:6px; max-width:360px;",
+            ),
+        )
+
     # ------------------------
     # Inputs auxiliares
     # ------------------------
@@ -875,6 +886,12 @@ def predicciones_server(input, output, session):
             style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 10px;",
         )
 
+        kpis_title = ui.tags.div(
+            ui.tags.span("Métricas del modelo", style="font-weight:600;"),
+            _metrics_info_tooltip(),
+            style="display:flex; align-items:center; gap:6px; margin-top:10px;",
+        )
+
         exogs_line = ui.tags.div(
             ui.tags.span("Exógenas activas: ", style="font-weight:600; margin-right:6px;"),
             _pill(", ".join(res["predictors_used"]) if res["predictors_used"] else "Ninguna"),
@@ -914,6 +931,7 @@ def predicciones_server(input, output, session):
             PANEL_STYLES,
             header,
             exogs_line,
+            kpis_title,
             kpis,
             body,
             footer,
