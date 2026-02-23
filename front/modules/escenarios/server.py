@@ -1,6 +1,6 @@
 import pandas as pd
 from shiny import module, reactive, render, ui
-
+import httpx
 from back.models.utils.models_graph import plot_predictions
 from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
@@ -792,8 +792,9 @@ def escenarios_server(input, output, session):
             ui.notification_show("Faltan nuevos valores: completa todas las celdas seleccionadas.", type="warning")
             return
 
-        bw = base_window()
-        start_txt, end_txt = bw["start_txt"], bw["end_txt"]
+        info = base_info_rv.get()
+        win_start = info["window"]["start"]
+        win_end = info["window"]["end"]
         start_dt, end_dt = bw["start_dt"], bw["end_dt"]
         temp = info["temp"]
 
@@ -815,7 +816,7 @@ def escenarios_server(input, output, session):
             "max_lag": 12,
             "recursive_forecast": True,
             "scenario_mode": "past",
-            "scenario_window": {"start": start_txt, "end": end_txt},
+            "scenario_window": {"start": win_start, "end": win_end},
             "scenario_overrides": overrides,
             "scenario_future_values": [],
         }
@@ -846,8 +847,12 @@ def escenarios_server(input, output, session):
             last_sig_rv.set(scenario_signature())
             ui.notification_show("Escenario calculado.", type="message")
 
-        except Exception as e:
-            ui.notification_show(f"Error calculando escenario: {e}", type="error")
+        except httpx.HTTPStatusError as e:
+            try:
+                detail = e.response.json()
+            except Exception:
+                detail = e.response.text
+            ui.notification_show(f"Error {e.response.status_code}: {detail}", type="error")
 
     # ------------------------
     # UI Panel 4
