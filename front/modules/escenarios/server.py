@@ -11,6 +11,7 @@ from front.utils.back_api_wrappers import (
 from front.utils.utils import (
     ICON_SVG_INFO,
     PrediccionesCache,
+    _safe_alias,
     _to_date,
     build_name_to_table,
     compatibilidad_con_objetivo,
@@ -533,7 +534,10 @@ def escenarios_server(input, output, session):
         if not info:
             return None
         dfb = info.get("df_base", pd.DataFrame()).copy()
-        if dfb.empty or "Fecha" not in dfb.columns or exog not in dfb.columns:
+        if dfb.empty or "Fecha" not in dfb.columns:
+            return None
+        exog_col = exog if exog in dfb.columns else _safe_alias(exog)
+        if exog_col not in dfb.columns:
             return None
         temp = info["temp"]
         # Creamos key canónica por fila:
@@ -543,7 +547,7 @@ def escenarios_server(input, output, session):
         row = dfb[dfb["__key"] == date_key]
         if row.empty:
             return None
-        v = pd.to_numeric(row.iloc[0][exog], errors="coerce")
+        v = pd.to_numeric(row.iloc[0][exog_col], errors="coerce")
         return None if pd.isna(v) else float(v)
 
     def _build_overrides_and_missing():
@@ -685,7 +689,13 @@ def escenarios_server(input, output, session):
                 ui.notification_show("La ventana no tiene datos tras aplicar el filtro de fechas.", type="warning")
                 return
 
-            keep_cols = [c for c in [*esc_active_exogs(), y_col] if c and c in sl.columns]
+            keep_cols = []
+            for c in [*esc_active_exogs(), y_col]:
+                if not c:
+                    continue
+                resolved = c if c in sl.columns else _safe_alias(c)
+                if resolved in sl.columns:
+                    keep_cols.append(resolved)
             if "Fecha" not in keep_cols:
                 keep_cols = ["Fecha"] + [c for c in keep_cols if c != "Fecha"]
             else:
