@@ -218,3 +218,4 @@ def get_monthly_series_with_filters(
     )
 
     return fetch_data(q, tuple(params)) or []
+
