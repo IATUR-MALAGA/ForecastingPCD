@@ -96,58 +96,69 @@ def escenarios_server(input, output, session):
             )
         return pd.to_datetime(df.index, errors="coerce")
 
-    # ---------------------------------------------------------------------
-    # Temporalidad / normalización (mensual vs diario)
-    # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Temporalidad / normalización (mensual vs diario)
+# ---------------------------------------------------------------------
     @reactive.Calc
     def target_temporalidad() -> str:
         meta = cache.get_meta(target_var_rv.get()) or {}
         return str(meta.get("temporalidad", "")).lower()
 
-    def _is_monthly(temp: str) -> bool:
+    def is_monthly(temp: str) -> bool:
         t = (temp or "").lower()
         return ("mes" in t) or ("mens" in t) or ("monthly" in t)
 
-    def _granularity(temp: str) -> str:
-        """Frecuencia para date_range."""
-        return "MS" if _is_monthly(temp) else "D"
+    def norm_dt(dt: pd.Timestamp, temp: str) -> pd.Timestamp:
+        """Normaliza timestamp según temporalidad (inicio de mes o inicio de día)."""
+        if pd.isna(dt):
+            return pd.NaT
+        return dt.to_period("M").to_timestamp(how="start") if is_monthly(temp) else dt.normalize()
 
-    def _parse_user_dt(txt: str, temp: str) -> pd.Timestamp:
+    def granularity(temp: str) -> str:
+        """Frecuencia para date_range."""
+        return "MS" if is_monthly(temp) else "D"
+
+    def parse_user_dt(txt: str, temp: str) -> pd.Timestamp:
         """
-        Parsea texto de fecha. Si mensual, admite YYYY-MM y normaliza al inicio de mes.
-        Si diario, normaliza al inicio de día.
+        Parsea texto de fecha. Si mensual, admite YYYY-MM (se completa con -01).
         """
         s = (txt or "").strip()
         if not s:
             return pd.NaT
 
-        if _is_monthly(temp) and len(s) == 7 and s[4] == "-":  # YYYY-MM
+        if is_monthly(temp) and len(s) == 7 and s[4] == "-":  # YYYY-MM
             s = f"{s}-01"
 
         dt = pd.to_datetime(s, errors="coerce")
-        if pd.isna(dt):
-            return pd.NaT
+        return norm_dt(dt, temp)
 
-        return dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
-
-    def _normalize_dt_series(x, temp: str) -> pd.Series:
+    def normalize_dt_series(x, temp: str) -> pd.Series:
         s = pd.to_datetime(x, errors="coerce")
-        if _is_monthly(temp):
+        if is_monthly(temp):
             return s.dt.to_period("M").dt.to_timestamp(how="start")
         return s.dt.normalize()
 
-    def _dt_key(dt: pd.Timestamp, temp: str) -> str:
-        if pd.isna(dt):
+    def dt_str(dt: pd.Timestamp, temp: str, *, kind: str = "key") -> str:
+        """
+        kind="key"  -> YYYY-MM-DD (estable para ids/claves)
+        kind="label"-> YYYY-MM si mensual, YYYY-MM-DD si diario
+        """
+        d = norm_dt(dt, temp)
+        if pd.isna(d):
             return ""
-        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
+        if kind == "label" and is_monthly(temp):
+            return d.strftime("%Y-%m")
         return d.strftime("%Y-%m-%d")
 
+    def _is_monthly(temp: str) -> bool: 
+        t = (temp or "").lower() 
+        return ("mes" in t) or ("mens" in t) or ("monthly" in t)
+    
     def _dt_label(dt: pd.Timestamp, temp: str) -> str:
-        if pd.isna(dt):
-            return ""
-        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize()
+        if pd.isna(dt): 
+            return "" 
+        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize() 
         return d.strftime("%Y-%m") if _is_monthly(temp) else d.strftime("%Y-%m-%d")
-
     # ---------------------------------------------------------------------
     # Step indicator (opcional)
     # ---------------------------------------------------------------------
@@ -461,398 +472,357 @@ def escenarios_server(input, output, session):
         current_step.set(4)
 
     # =====================================================================
-    # Panel 4: Escenarios PASADOS (rediseñado)
+    # Panel 4: Escenarios FUTUROS (exógenas inventadas por el usuario)
     # =====================================================================
 
-    # ------------------------
-    # Modelo + exógenas activas (en el modelo)
-    # ------------------------
-    @reactive.Calc
-    def esc_selected_model():
-        return input.esc_model() if "esc_model" in input else "xgboost"
-
-    @reactive.Calc
-    def esc_active_exogs():
-        allowed = set(predictors_rv.get() or [])
-        selected = list(
-            input.esc_model_exogs()
-            if "esc_model_exogs" in input
-            else (predictors_rv.get() or [])
-        )
-        return [x for x in selected if x in allowed]
+    # --- Resultado / error (reusa scenario_res_rv si ya lo tienes) ---
+    scenario_err_rv = reactive.Value(None)  # error legible
 
     # ------------------------
-    # Base cargada (ventana histórica)
+    # Helpers Panel 4 (puros)
     # ------------------------
-    base_info_rv = reactive.Value(None)       # {"window":{start,end}, "df_base": df, "target_col": str, "temp": str}
-    scenario_res_rv = reactive.Value(None)    # {"table": df_result, "plot": {...}, "raw": res, ...}
-    last_sig_rv = reactive.Value(None)
+    def _cell_id(exog_name: str, k: int) -> str:
+        # id estable por exógena + periodo
+        return stable_id("esc_fut_val", f"{exog_name}__P{k}")
 
-    @reactive.Calc
-    def base_window():
-        """Inicio/fin como texto y como timestamp normalizado según temporalidad."""
-        start_txt = (input.esc_past_start() if "esc_past_start" in input else "") or ""
-        end_txt = (input.esc_past_end() if "esc_past_end" in input else "") or ""
+    def _infer_future_index_from_target_end(horizon: int) -> pd.DatetimeIndex:
+        """
+        Backend infiere future_index a partir del último __dt histórico.
+        Aquí lo aproximamos con el end del target (debería coincidir).
+        """
+        target = target_var_rv.get()
+        if not target:
+            return pd.DatetimeIndex([])
+
+        _s, end = cache.get_date_range(target)
+        if end is None:
+            return pd.DatetimeIndex([])
+
         temp = target_temporalidad()
-        start_dt = _parse_user_dt(start_txt, temp)
-        end_dt = _parse_user_dt(end_txt, temp)
-        return {"start_txt": start_txt, "end_txt": end_txt, "start_dt": start_dt, "end_dt": end_dt, "temp": temp}
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if pd.isna(end_dt):
+            return pd.DatetimeIndex([])
+
+        if _is_monthly(temp):
+            start = (end_dt + pd.offsets.MonthBegin(1)).normalize()
+            return pd.date_range(start=start, periods=horizon, freq="MS")
+        start = (end_dt + pd.Timedelta(days=1)).normalize()
+        return pd.date_range(start=start, periods=horizon, freq="D")
+
+    def _parse_forecast_response(resp: dict):
+        df = pd.DataFrame(resp.get("df") or [])
+        if df.empty:
+            return None
+
+        y_col = resp["y_col"]
+        n_obs = int(resp["n_obs"])
+        h = int(resp["horizon"])
+
+        future = df.iloc[n_obs : n_obs + h]
+        pred_vals = resp["y_forecast"]
+        pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
+        return df, y_col, future, h, pred_vals, pred_series
+
+    def _build_pred_df(future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y") -> pd.DataFrame:
+        # igual que tu módulo de predicciones
+        if {"anio", "mes"}.issubset(future.columns):
+            if "dia" in future.columns:
+                fechas = pd.to_datetime(
+                    dict(year=future["anio"], month=future["mes"], day=future["dia"]),
+                    errors="coerce",
+                )
+            else:
+                fechas = pd.to_datetime(
+                    dict(year=future["anio"], month=future["mes"], day=1),
+                    errors="coerce",
+                )
+        else:
+            fechas = future.index
+
+        pred_df = pd.DataFrame({"Fecha": fechas, "Predicción": pred_vals})
+        pred_df["Fecha"] = pd.to_datetime(pred_df["Fecha"], errors="coerce").dt.strftime(date_fmt)
+        return pred_df
+
+    # ------------------------
+    # Inputs reactivos
+    # ------------------------
+    @reactive.Calc
+    def fut_horizon() -> int:
+        # (1) periodos a predecir
+        if "esc_fut_horizon" not in input:
+            return 2
+        try:
+            h = int(input.esc_fut_horizon() or 2)
+        except Exception:
+            h = 2
+        return max(1, min(h, 60))  # cap seguridad
 
     @reactive.Calc
-    def available_dates_from_base():
-        """Fechas disponibles en base cargada (claves canónicas YYYY-MM-DD)."""
-        info = base_info_rv.get()
-        if not info:
-            return []
-        dfb = info.get("df_base", pd.DataFrame()).copy()
-        if dfb.empty or "Fecha" not in dfb.columns:
-            return []
-        # Fecha ya viene normalizada; garantizamos formato canónico:
-        dt = _normalize_dt_series(dfb["Fecha"], info["temp"])
-        dt = [d for d in dt.tolist() if not pd.isna(d)]
-        dt = sorted(set(dt))
-        return [ _dt_key(d, info["temp"]) for d in dt if _dt_key(d, info["temp"]) ]
+    def fut_exogs() -> list[str]:
+        # exógenas seleccionadas (Panel 2)
+        return list(predictors_rv.get() or [])
 
     @reactive.Calc
-    def edit_exogs():
-        """Exógenas que el usuario quiere modificar (subconjunto de activas)."""
-        active = set(esc_active_exogs() or [])
-        sel = list(input.esc_edit_exogs() if "esc_edit_exogs" in input else [])
-        return [x for x in sel if x in active]
+    def fut_model() -> str:
+        if "esc_fut_model" not in input:
+            return "sarimax"
+        return input.esc_fut_model() or "sarimax"
 
     @reactive.Calc
-    def edit_dates():
-        """Fechas que el usuario quiere modificar (claves canónicas)."""
-        choices = set(available_dates_from_base())
-        sel = list(input.esc_edit_dates() if "esc_edit_dates" in input else [])
-        sel = [d for d in sel if d in choices]
-        return sel
-
-    def _base_value_for(exog: str, date_key: str):
-        """Devuelve el valor base (numérico) de la exógena en esa fecha (o None)."""
-        info = base_info_rv.get()
-        if not info:
-            return None
-        dfb = info.get("df_base", pd.DataFrame()).copy()
-        if dfb.empty or "Fecha" not in dfb.columns:
-            return None
-        exog_col = exog if exog in dfb.columns else _safe_alias(exog)
-        if exog_col not in dfb.columns:
-            return None
-        temp = info["temp"]
-        # Creamos key canónica por fila:
-        dt = _normalize_dt_series(dfb["Fecha"], temp)
-        keys = dt.dt.strftime("%Y-%m-%d")
-        dfb = dfb.assign(__key=keys)
-        row = dfb[dfb["__key"] == date_key]
-        if row.empty:
-            return None
-        v = pd.to_numeric(row.iloc[0][exog_col], errors="coerce")
-        return None if pd.isna(v) else float(v)
-
-    def _build_overrides_and_missing():
-        """
-        Construye overrides por (exog, fecha) seleccionados.
-        Requiere que cada celda seleccionada tenga un nuevo valor.
-        """
-        info = base_info_rv.get()
-        if not info:
-            return [], True
-
-        ws = info["window"]["start"]
-        we = info["window"]["end"]
-
-        overrides = []
-        missing = False
-
-        for ex in edit_exogs():
-            for d in edit_dates():
-                cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{d}")
-                new_val = input[cid]() if cid in input else None
-                if new_val is None:
-                    missing = True
-                    continue
-                overrides.append({
-                    "var": ex,
-                    "op": "set",
-                    "value": float(new_val),
-                    "start": d,
-                    "end": d,
-                })
-
-        return overrides, missing
+    def fut_future_index() -> pd.DatetimeIndex:
+        return _infer_future_index_from_target_end(fut_horizon())
 
     @reactive.Calc
-    def overrides_signature():
+    def fut_matrix_values() -> dict[str, list[float | None]]:
         """
-        Firma de valores introducidos (para invalidar resultados si cambian inputs numéricos).
+        dict: exog -> [P1..Ph] (None si no relleno)
         """
-        info = base_info_rv.get()
-        if not info:
-            return None
-        ws = info["window"]["start"]
-        we = info["window"]["end"]
-        tup = []
-        for ex in edit_exogs():
-            for d in edit_dates():
-                cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{d}")
+        exogs = fut_exogs()
+        h = fut_horizon()
+        out: dict[str, list[float | None]] = {}
+        for ex in exogs:
+            row = []
+            for k in range(1, h + 1):
+                cid = _cell_id(ex, k)
                 v = input[cid]() if cid in input else None
-                tup.append((ex, d, v))
-        return repr(tup)
+                row.append(v)
+            out[ex] = row
+        return out
 
     @reactive.Calc
-    def scenario_signature():
-        """
-        Si cambia cualquier cosa relevante, invalidamos resultados.
-        """
+    def fut_signature():
         if current_step.get() != 4:
             return None
-        bw = base_window()
         return (
-            esc_selected_model(),
-            tuple(esc_active_exogs()),
-            bw["start_txt"],
-            bw["end_txt"],
-            tuple(edit_exogs()),
-            tuple(edit_dates()),
-            overrides_signature(),
-            repr(selected_filters_by_var()),
+            fut_model(),
             target_var_rv.get(),
+            tuple(fut_exogs()),
+            fut_horizon(),
+            repr(fut_matrix_values()),
+            repr(selected_filters_by_var()),
         )
 
     @reactive.Effect
-    def _invalidate_on_change():
-        sig = scenario_signature()
+    def _invalidate_future_results_on_change():
+        sig = fut_signature()
         if sig is None:
             return
         last = last_sig_rv.get()
         if last is not None and sig != last:
             scenario_res_rv.set(None)
+            scenario_err_rv.set(None)
 
     # ------------------------
-    # Acción: cargar base (ventana histórica)
+    # UI: tabla editable (2)
     # ------------------------
-    @reactive.Effect
-    @reactive.event(input.esc_load_base_past)
-    def _load_base_past():
-        bw = base_window()
-        start_txt, end_txt = bw["start_txt"], bw["end_txt"]
-        start_dt, end_dt = bw["start_dt"], bw["end_dt"]
-        temp = bw["temp"]
+    @output
+    @render.ui
+    def esc_future_exog_table():
+        if current_step.get() != 4:
+            return ui.div()
 
-        if pd.isna(start_dt) or pd.isna(end_dt):
-            ui.notification_show("Debes indicar inicio y fin válidos (YYYY-MM-DD o YYYY-MM si es mensual).", type="warning")
-            return
-        if start_dt > end_dt:
-            ui.notification_show("La fecha de inicio debe ser menor o igual que la fecha fin.", type="warning")
-            return
+        exogs = fut_exogs()
+        h = fut_horizon()
+        idx = fut_future_index()
+        temp = target_temporalidad()
 
-        runner = MODEL_RUNNERS.get(esc_selected_model())
-        if runner is None:
-            ui.notification_show("Modelo no soportado.", type="error")
-            return
-
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": esc_active_exogs(),
-            "filters_by_var": selected_filters_by_var(),
-            "horizon": 1,             # no importa aquí; queremos df completo para la ventana
-            "train_ratio": 0.7,
-            "return_df": True,
-            "auto_params": True,
-            "s": 12,
-            "use_target_lags": True,
-            "max_lag": 12,
-            "recursive_forecast": True,
-            "scenario_mode": "past",
-            "scenario_window": {"start": start_txt, "end": end_txt},
-            "scenario_overrides": [],
-            "scenario_future_values": [],
-        }
-
-        try:
-            res = runner(payload)
-            df = pd.DataFrame(res.get("df") or [])
-            if df.empty:
-                ui.notification_show("No se pudo cargar la base histórica para ese rango.", type="warning")
-                return
-
-            y_col = res.get("y_col")
-
-            # Construimos df_base con Fecha + exógenas activas + target real (si está en df)
-            dt = _normalize_dt_series(_extract_dates(df), temp)
-            sl = df.copy()
-            sl["Fecha"] = dt
-
-            sl = sl[(sl["Fecha"] >= start_dt) & (sl["Fecha"] <= end_dt)].copy()
-            if sl.empty:
-                ui.notification_show("La ventana no tiene datos tras aplicar el filtro de fechas.", type="warning")
-                return
-
-            keep_cols = []
-            for c in [*esc_active_exogs(), y_col]:
-                if not c:
-                    continue
-                resolved = c if c in sl.columns else _safe_alias(c)
-                if resolved in sl.columns:
-                    keep_cols.append(resolved)
-            if "Fecha" not in keep_cols:
-                keep_cols = ["Fecha"] + [c for c in keep_cols if c != "Fecha"]
-            else:
-                keep_cols = ["Fecha"] + [c for c in keep_cols if c != "Fecha"]
-
-            df_base = sl[keep_cols].copy()
-
-            base_info_rv.set({
-                "window": {"start": start_txt, "end": end_txt},
-                "df_base": df_base,
-                "target_col": y_col,
-                "temp": temp,
-            })
-
-            scenario_res_rv.set(None)
-            last_sig_rv.set(scenario_signature())
-            ui.notification_show("Base histórica cargada.", type="message")
-
-        except Exception as e:
-            ui.notification_show(f"Error cargando base histórica: {e}", type="error")
-
-    # ------------------------
-    # Acción: calcular escenario pasado
-    # ------------------------
-    def _build_past_result_table(res: dict, selected_date_keys: list[str], temp: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp):
-        df = pd.DataFrame(res.get("df") or [])
-        if df.empty:
-            return pd.DataFrame(), None
-
-        y_col = res.get("y_col")
-        dt = _normalize_dt_series(_extract_dates(df), temp)
-
-        mask = (dt >= start_dt) & (dt <= end_dt)
-        dates = dt[mask].reset_index(drop=True)
-
-        # y_true: preferimos res["y_true"] si viene; si no, intentamos del df/y_col
-        y_true_raw = res.get("y_true")
-        if y_true_raw:
-            y_true = pd.Series(pd.to_numeric(y_true_raw, errors="coerce")).reset_index(drop=True)
-        elif y_col and y_col in df.columns:
-            y_true = pd.Series(pd.to_numeric(df.loc[mask, y_col], errors="coerce")).reset_index(drop=True)
-        else:
-            y_true = pd.Series([], dtype="float64")
-
-        y_pred = pd.Series(pd.to_numeric(res.get("y_forecast", []) or [], errors="coerce")).reset_index(drop=True)
-
-        n = min(len(dates), len(y_true), len(y_pred))
-        if n < 1:
-            return pd.DataFrame(), None
-
-        out = pd.DataFrame({
-            "Fecha_dt": dates.iloc[:n].values,
-            "Real": y_true.iloc[:n].values,
-            "Escenario": y_pred.iloc[:n].values,
-        })
-        out["Fecha"] = pd.to_datetime(out["Fecha_dt"], errors="coerce").dt.strftime("%Y-%m-%d")
-
-        # Filtrar SOLO fechas editadas
-        sel = set(selected_date_keys or [])
-        out = out[out["Fecha"].isin(sel)].copy()
-        out = out.sort_values("Fecha_dt")
-
-        if out.empty:
-            return pd.DataFrame(), None
-
-        out["Delta"] = out["Escenario"] - out["Real"]
-        out["Delta_%"] = (out["Delta"] / pd.to_numeric(out["Real"], errors="coerce").replace(0, pd.NA)) * 100.0
-
-        plot_pack = {
-            "dates": pd.to_datetime(out["Fecha"], errors="coerce"),
-            "y_true": pd.to_numeric(out["Real"], errors="coerce"),
-            "y_pred": pd.to_numeric(out["Escenario"], errors="coerce"),
-        }
-        out = out.drop(columns=["Fecha_dt"])
-        return out, plot_pack
-
-    @reactive.Effect
-    @reactive.event(input.esc_calc_past)
-    def _run_past_scenario():
-        info = base_info_rv.get()
-        if not info:
-            ui.notification_show("Primero carga la base histórica (ventana).", type="warning")
-            return
-
-        if not edit_exogs():
-            ui.notification_show("Selecciona al menos una exógena a modificar.", type="warning")
-            return
-        if not edit_dates():
-            ui.notification_show("Selecciona al menos una fecha a modificar.", type="warning")
-            return
-
-        overrides, missing = _build_overrides_and_missing()
-        if missing:
-            ui.notification_show("Faltan nuevos valores: completa todas las celdas seleccionadas.", type="warning")
-            return
-
-        info = base_info_rv.get()
-        win_start = info["window"]["start"]
-        win_end = info["window"]["end"]
-        start_dt, end_dt = bw["start_dt"], bw["end_dt"]
-        temp = info["temp"]
-
-        runner = MODEL_RUNNERS.get(esc_selected_model())
-        if runner is None:
-            ui.notification_show("Modelo no soportado.", type="error")
-            return
-
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": esc_active_exogs(),
-            "filters_by_var": selected_filters_by_var(),
-            "horizon": 1,
-            "train_ratio": 0.7,
-            "return_df": True,
-            "auto_params": True,
-            "s": 12,
-            "use_target_lags": True,
-            "max_lag": 12,
-            "recursive_forecast": True,
-            "scenario_mode": "past",
-            "scenario_window": {"start": win_start, "end": win_end},
-            "scenario_overrides": overrides,
-            "scenario_future_values": [],
-        }
-
-        try:
-            res = runner(payload)
-
-            table_df, plot_pack = _build_past_result_table(
-                res=res,
-                selected_date_keys=edit_dates(),
-                temp=temp,
-                start_dt=start_dt,
-                end_dt=end_dt,
+        if not exogs:
+            return ui.tags.div(
+                ui.tags.b("No hay exógenas seleccionadas."),
+                ui.tags.span(" Vuelve al Panel 2 para seleccionar al menos una."),
+                style="color:#6b7280;",
             )
-            if table_df.empty:
-                ui.notification_show("No se pudieron construir resultados para las fechas editadas.", type="warning")
+
+        if idx.empty:
+            return ui.tags.div(
+                ui.tags.b("No se pudo inferir el calendario futuro."),
+                ui.tags.span(" Revisa el rango de fechas del objetivo."),
+                style="color:#6b7280;",
+            )
+
+        header_cells = [ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")]
+        for k in range(1, h + 1):
+            header_cells.append(
+                ui.tags.th(
+                    ui.tags.div(f"P{k}", style="font-weight:700;"),
+                    ui.tags.div(_dt_label(idx[k-1], temp), style="font-size:12px; color:#6b7280; margin-top:2px;"),
+                )
+            )
+
+        body_rows = []
+        for ex in exogs:
+            cells = [
+                ui.tags.td(
+                    ui.tags.span(ex),
+                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap;",
+                )
+            ]
+            for k in range(1, h + 1):
+                cid = _cell_id(ex, k)
+                cells.append(
+                    ui.tags.td(
+                        ui.input_numeric(cid, label="", value=None, step=0.01),  # ✅ sin ns()
+                        style="min-width:120px;",
+                    )
+                )
+            body_rows.append(ui.tags.tr(*cells))
+
+        return ui.tags.div(
+            ui.tags.div(
+                ui.tags.b("2) Valores futuros de exógenas"),
+                ui.tags.span(" (rellena todas las celdas)"),
+                style="margin-bottom:8px;",
+            ),
+            ui.tags.div(
+                ui.tags.table(
+                    ui.tags.thead(ui.tags.tr(*header_cells)),
+                    ui.tags.tbody(*body_rows),
+                    style="border-collapse:collapse; width:max-content;",
+                ),
+                style="overflow:auto; max-width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:8px;",
+            ),
+        )
+
+    # ------------------------
+    # Cálculo bajo demanda (3)
+    # ------------------------
+    @reactive.Effect
+    @reactive.event(input.esc_fut_calc)
+    def _compute_future_scenario_on_click():
+        if current_step.get() != 4:
+            return
+        if int(input.esc_fut_calc() or 0) == 0:
+            return
+
+        # 🔎 Debug inmediato: si esto no aparece, el evento no está entrando
+        try:
+            n_clicks = int(input.esc_fut_calc() or 0)
+        except Exception:
+            n_clicks = -1
+
+        scenario_err_rv.set(f"Calculando… (click={n_clicks})")
+        scenario_res_rv.set(None)
+
+        try:
+            target = target_var_rv.get()
+            exogs = fut_exogs()
+            h = fut_horizon()
+            model = fut_model()
+            filters = selected_filters_by_var()
+
+            if not target:
+                scenario_err_rv.set("No hay variable objetivo seleccionada.")
+                last_sig_rv.set(fut_signature())
                 return
+
+            if not exogs:
+                scenario_err_rv.set("No hay exógenas seleccionadas (Panel 2).")
+                last_sig_rv.set(fut_signature())
+                return
+
+            idx = fut_future_index()
+            if idx.empty or len(idx) != h:
+                scenario_err_rv.set("No pude construir el índice temporal futuro.")
+                last_sig_rv.set(fut_signature())
+                return
+
+            mat = fut_matrix_values()
+
+            for ex in exogs:
+                for k, v in enumerate(mat.get(ex, []), start=1):
+                    if v is None:
+                        scenario_err_rv.set(f"Falta valor para '{ex}' en P{k}.")
+                        last_sig_rv.set(fut_signature())
+                        return
+
+            future_values = []
+            for j, dt in enumerate(idx):
+                date_str = pd.to_datetime(dt).strftime("%Y-%m-%d")
+                for ex in exogs:
+                    future_values.append({"var": ex, "date": date_str, "value": float(mat[ex][j])})
+
+            runner = MODEL_RUNNERS.get(model)
+            if runner is None:
+                scenario_err_rv.set(f"Modelo no soportado: {model}")
+                last_sig_rv.set(fut_signature())
+                return
+
+            payload = {
+                "target_var": target,
+                "predictors": list(exogs),
+                "filters_by_var": filters,
+                "train_ratio": 0.70,
+                "auto_params": True,
+                "return_df": True,
+                "horizon": int(h),
+                "scenario_mode": "future",
+                "scenario_future_values": future_values,
+                "scenario_overrides": [],
+            }
+
+            if model == "sarimax":
+                payload.update({"s": 12})
+            elif model == "xgboost":
+                payload.update({"use_target_lags": True, "max_lag": 12, "recursive_forecast": True})
+
+            resp = runner(payload)
+
+            parsed = _parse_forecast_response(resp)
+            if parsed is None:
+                scenario_err_rv.set("El backend devolvió df vacío (resp['df']).")
+                last_sig_rv.set(fut_signature())
+                return
+
+            df, y_col, future, h2, pred_vals, pred_series = parsed
+
+            fig = plot_predictions(
+                df=df,
+                pred=pred_series,
+                title=("Escenario futuro (SARIMAX)" if model == "sarimax" else "Escenario futuro (XGBoost)"),
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=h2,
+                holidays_col=None,
+            )
+
+            pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
 
             scenario_res_rv.set({
-                "raw": res,
-                "table": table_df,
-                "plot": plot_pack,
-                "window": {"start": start_txt, "end": end_txt},
-                "overrides": overrides,
-                "edited_dates": edit_dates(),
-                "edited_exogs": edit_exogs(),
+                "model": model,
+                "fig": fig,
+                "pred_df": pred_df,
+                "mape": resp.get("mape"),
+                "rmse": resp.get("rmse"),
+                "mae": resp.get("mae"),
             })
-            last_sig_rv.set(scenario_signature())
-            ui.notification_show("Escenario calculado.", type="message")
+            scenario_err_rv.set(None)
+            last_sig_rv.set(fut_signature())
 
-        except httpx.HTTPStatusError as e:
-            try:
-                detail = e.response.json()
-            except Exception:
-                detail = e.response.text
-            ui.notification_show(f"Error {e.response.status_code}: {detail}", type="error")
+        except Exception as e:
+            scenario_err_rv.set(f"Fallo al calcular: {type(e).__name__}: {e}")
+            last_sig_rv.set(fut_signature())
+            return
+
+    # ------------------------
+    # Outputs
+    # ------------------------
+    @output
+    @render.plot
+    def esc_fut_plot():
+        res = scenario_res_rv.get()
+        return None if not res else res["fig"]
+
+    @output
+    @render.data_frame
+    def esc_fut_table():
+        res = scenario_res_rv.get()
+        if not res or res.get("pred_df") is None:
+            return render.DataGrid(pd.DataFrame())
+        df = res["pred_df"].copy()
+        if "Predicción" in df.columns:
+            df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").round(4)
+        return render.DataGrid(df)
 
     # ------------------------
     # UI Panel 4
@@ -863,224 +833,103 @@ def escenarios_server(input, output, session):
         if current_step.get() != 4:
             return ui.div()
 
-        preds = predictors_rv.get() or []
-        info = base_info_rv.get()
+        res = scenario_res_rv.get()
+        err = scenario_err_rv.get()
 
-        base_controls = ui.card(
-            ui.h4("Ventana histórica"),
-            ui.input_text("esc_past_start", "Inicio (YYYY-MM-DD o YYYY-MM si es mensual)", ""),
-            ui.input_text("esc_past_end", "Fin (YYYY-MM-DD o YYYY-MM si es mensual)", ""),
-            ui.input_action_button("esc_load_base_past", "Cargar valores base", class_="btn-secondary"),
-            style="padding: 12px; border-radius: 14px;",
+        header = ui.card(
+            ui.h3("Panel 4: Escenarios futuros", style="margin:0; text-align:center;"),
+            ui.tags.div(
+                "1) Periodos · 2) Valores exógenas · 3) Modelo · 4) Calcular",
+                style="color:#6b7280; margin-top:4px; text-align:center;",
+            ),
+            ui.tags.hr(style="margin:12px 0;"),
+            ui.tags.div(
+                ui.input_numeric(
+                    "esc_fut_horizon",
+                    "1) Periodos a predecir",
+                    value=2,
+                    min=1,
+                    max=60,
+                    step=1,
+                ),
+                style="max-width:320px; margin:0 auto;",
+            ),
+            style="padding:14px; border-radius:14px;",
         )
 
-        if not info:
-            # Solo mostramos selección modelo + exógenas activas + ventana
-            return ui.div(
-                PANEL_STYLES,
-                ui.h3("Panel 4: Escenario pasado"),
+        model_box = ui.card(
+            ui.tags.div(
                 ui.input_radio_buttons(
-                    "esc_model",
-                    "Modelo",
+                    "esc_fut_model",
+                    "3) Modelo",
                     choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
-                    selected="xgboost",
+                    selected=fut_model(),
                     inline=True,
                 ),
-                ui.input_checkbox_group(
-                    "esc_model_exogs",
-                    "Exógenas activas (en el modelo)",
-                    choices=preds,
-                    selected=preds,
+                style="display:flex; justify-content:center;",
+            ),
+            ui.tags.div(
+                ui.input_action_button("esc_fut_calc", "Calcular", class_="btn-primary"),
+                style="margin-top:10px; display:flex; justify-content:center;",
+            ),
+            style="padding:14px; border-radius:14px; margin-top:12px;",
+        )
+
+        status = ui.div()
+        if err:
+            status = ui.tags.div(
+                ui.tags.b("Error: "),
+                ui.tags.span(err),
+                style=(
+                    "margin-top:10px; padding:10px 12px; border:1px solid #fecaca; "
+                    "border-radius:12px; background:#fef2f2; color:#991b1b;"
                 ),
-                base_controls,
-                ui.p("Carga la base para poder seleccionar fechas y editar valores."),
-                ui.input_action_button("esc_prev_4", "← Anterior"),
+            )
+        elif res is None:
+            status = ui.tags.div(
+                ui.tags.b("Estado: "),
+                ui.tags.span("rellena la tabla y pulsa «Calcular».", style="color:#6b7280;"),
+                style=(
+                    "margin-top:10px; padding:10px 12px; border:1px dashed #d1d5db; "
+                    "border-radius:12px; background:#fafafa;"
+                ),
             )
 
-        # Con base cargada: selector de exógenas a modificar + fechas + editor
-        temp = info["temp"]
+        outputs = ui.div()
+        if res is not None:
+            outputs = ui.tags.div(
+                ui.card(
+                    ui.h5("Gráfico", style="margin:0 0 8px 0;"),
+                    ui.output_plot("esc_fut_plot", width="100%", height="420px"),
+                    style="padding:12px; border-radius:14px; flex:2 1 640px; min-width:520px;",
+                ),
+                ui.card(
+                    ui.h5("Valores predichos", style="margin:0 0 8px 0;"),
+                    ui.tags.div(
+                        ui.output_data_frame("esc_fut_table"),
+                        style="max-height:420px; overflow:auto;",
+                    ),
+                    style="padding:12px; border-radius:14px; flex:1 1 420px; min-width:340px;",
+                ),
+                style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; margin-top:12px;",
+            )
 
-        # Fechas (choices: key -> label)
-        keys = available_dates_from_base()
-        # Mostrar friendly label según temporalidad
-        choices_dates = {}
-        for k in keys:
-            dt = pd.to_datetime(k, errors="coerce")
-            choices_dates[k] = _dt_label(dt, temp) if not pd.isna(dt) else k
-
-        selected_dates = edit_dates() or list(choices_dates.keys())
-        selected_dates = [d for d in selected_dates if d in choices_dates]
-
-        editor_block = ui.output_ui("esc_past_editor_ui")
+        footer = ui.tags.div(
+            ui.input_action_button("esc_prev_4", "← Anterior"),
+            style="margin-top:12px;",
+        )
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 4: Escenario pasado"),
-            ui.input_radio_buttons(
-                "esc_model",
-                "Modelo",
-                choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
-                selected="xgboost",
-                inline=True,
-            ),
-            ui.input_checkbox_group(
-                "esc_model_exogs",
-                "Exógenas activas (en el modelo)",
-                choices=preds,
-                selected=list(set(preds).intersection(set(esc_active_exogs() or preds))),
-            ),
-            base_controls,
-            ui.tags.hr(style="margin: 12px 0;"),
-            ui.h4("Edición de escenario"),
-            ui.input_checkbox_group(
-                "esc_edit_exogs",
-                "Exógenas a modificar",
-                choices=esc_active_exogs(),
-                selected=edit_exogs(),
-            ),
-            ui.input_checkbox_group(
-                "esc_edit_dates",
-                "Fechas a modificar",
-                choices=choices_dates,
-                selected=selected_dates,
-            ),
-            editor_block,
-            ui.tags.div(
-                ui.input_action_button("esc_calc_past", "Calcular escenario", class_="btn-primary"),
-                style="margin-top: 12px;",
-            ),
-            ui.tags.hr(style="margin: 12px 0;"),
-            ui.h4("Resultados (solo fechas editadas)"),
-            ui.output_plot("scenario_plot", width="100%", height="360px"),
-            ui.output_data_frame("scenario_table"),
-            ui.output_ui("kpi_ui"),
-            ui.input_action_button("esc_prev_4", "← Anterior"),
+            header,
+            ui.output_ui("esc_future_exog_table"),
+            model_box,
+            status,
+            outputs,
+            footer,
         )
 
     @reactive.Effect
     @reactive.event(input.esc_prev_4)
     def _go_step_3_from_4():
-        current_step.set(3)
-
-    # ------------------------
-    # Editor UI: Fecha | base | nuevo
-    # ------------------------
-    @output
-    @render.ui
-    def esc_past_editor_ui():
-        info = base_info_rv.get()
-        if not info:
-            return ui.div()
-
-        if not edit_exogs():
-            return ui.p("Selecciona exógenas a modificar para mostrar el editor.")
-        if not edit_dates():
-            return ui.p("Selecciona fechas a modificar para mostrar el editor.")
-
-        ws = info["window"]["start"]
-        we = info["window"]["end"]
-
-        # Tabla por exógena
-        blocks = []
-        for ex in edit_exogs():
-            rows = []
-            for d in edit_dates():
-                base_val = _base_value_for(ex, d)
-                cid = stable_id("esc_past_set", f"{ws}__{we}__{ex}__{d}")
-
-                dt = pd.to_datetime(d, errors="coerce")
-                date_lbl = _dt_label(dt, info["temp"]) if not pd.isna(dt) else d
-
-                rows.append(
-                    ui.tags.tr(
-                        ui.tags.td(date_lbl, style="padding:6px 8px; white-space:nowrap;"),
-                        ui.tags.td(fmt(base_val), style="padding:6px 8px;"),
-                        ui.tags.td(
-                            ui.input_numeric(cid, "", value=None),
-                            style="padding:6px 8px; min-width:180px;",
-                        ),
-                    )
-                )
-
-            table = ui.tags.table(
-                ui.tags.thead(
-                    ui.tags.tr(
-                        ui.tags.th("Fecha", style="text-align:left; padding:6px 8px;"),
-                        ui.tags.th("Valor base", style="text-align:left; padding:6px 8px;"),
-                        ui.tags.th("Nuevo valor", style="text-align:left; padding:6px 8px;"),
-                    )
-                ),
-                ui.tags.tbody(*rows),
-                style="width:100%; border-collapse:collapse;",
-            )
-
-            blocks.append(
-                ui.card(
-                    ui.h5(ex, style="margin:0 0 8px 0;"),
-                    table,
-                    style="padding: 12px; border-radius: 14px;",
-                )
-            )
-
-        return ui.div(*blocks)
-
-    # ------------------------
-    # Outputs: plot + table + KPIs
-    # ------------------------
-    @output
-    @render.data_frame
-    def scenario_table():
-        packed = scenario_res_rv.get()
-        if not packed:
-            return render.DataGrid(pd.DataFrame())
-        df = packed.get("table", pd.DataFrame()).copy()
-        if df.empty:
-            return render.DataGrid(pd.DataFrame())
-
-        # redondeo amable
-        for c in ["Real", "Escenario", "Delta", "Delta_%"]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
-        if "Delta_%" in df.columns:
-            df["Delta_%"] = df["Delta_%"].round(3)
-        return render.DataGrid(df)
-
-    @output
-    @render.plot
-    def scenario_plot():
-        packed = scenario_res_rv.get()
-        if not packed:
-            return None
-        p = packed.get("plot")
-        if not p:
-            return None
-
-        import matplotlib.pyplot as plt
-
-        dates = p["dates"]
-        y_true = p["y_true"]
-        y_pred = p["y_pred"]
-
-        fig, ax = plt.subplots()
-        ax.plot(dates, y_true, marker="o", label="Real (target)")
-        ax.plot(dates, y_pred, marker="o", label="Escenario (pred)")
-        ax.set_title("Escenario vs Real (fechas editadas)")
-        ax.set_xlabel("Fecha")
-        ax.set_ylabel("Valor")
-        ax.legend()
-        fig.autofmt_xdate()
-        return fig
-
-    @output
-    @render.ui
-    def kpi_ui():
-        packed = scenario_res_rv.get()
-        if not packed:
-            return ui.div()
-        res = packed.get("raw") or {}
-        return ui.div(
-            _metric_pill("MAPE", float(res.get("mape", 0) or 0)),
-            _metric_pill("RMSE", float(res.get("rmse", 0) or 0)),
-            _metric_pill("MAE", float(res.get("mae", 0) or 0)),
-            ui.tags.span(f"Puntos editados: {len(packed.get('edited_dates', []) or [])}", class_="selection-pill"),
-        )
+        current_step.set(3)        

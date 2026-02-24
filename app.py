@@ -41,8 +41,8 @@ app_ui = ui.page_fluid(
 
 def server(input, output, session):
     # Llamar al servidor del módulo de predicciones
-    predicciones_server("predicciones"),
-    escenarios_server("escenarios"),
+    predicciones_server("predicciones")
+    escenarios_server("escenarios")
     #carga_generacion_server("carga_generacion")
 
 
