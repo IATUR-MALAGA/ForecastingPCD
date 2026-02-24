@@ -1,16 +1,13 @@
 import pandas as pd
 from shiny import ui, reactive, render, module
 from front.utils.back_api_wrappers import sarimax_run
-
+from front.utils.back_api_wrappers import xgboost_run
 from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
     get_tableName_for_variable,
 )
+from back.models.utils.models_graph import plot_predictions
 
-
-from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model, predict_sarimax
-from back.models.SARIMAX.sarimax_statistics import compute_metrics
-from back.models.SARIMAX.sarimax_graph import plot_predictions
 from front.utils.utils import (
     slug as _slug,  
     stable_id as _stable_id,
@@ -21,9 +18,13 @@ from front.utils.utils import (
     PrediccionesCache,
     compatibilidad_con_objetivo,
     panel_styles,
+<<<<<<< HEAD
     create_calendar_filter,
     process_date_range_filters,
     detect_temporal_filters,
+=======
+    ICON_SVG_INFO,
+>>>>>>> origin/main
 )
 
 
@@ -161,7 +162,14 @@ def predicciones_server(input, output, session):
                     class_=("compat-badge compat-yes" if compat else "compat-badge compat-no"),
                 )
 
-                reason_ui = ui.tags.div(reason, class_="compat-reason") if (not compat and reason) else ui.div()
+                info_icon = None
+                if not compat and reason:
+                    info_icon = ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        reason,
+                    )
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -170,26 +178,44 @@ def predicciones_server(input, output, session):
 
                 var_blocks.append(
                     ui.tags.div(
-                        ui.input_checkbox(var_id, name, value=False),
                         ui.tags.div(
+                            ui.input_checkbox(var_id, name, value=False),
+                            badge,
+                            info_icon,
+                            style="display: flex; align-items: baseline; gap: 6px;",
+                        ),
+                        ui.tags.details(
+                            ui.tags.summary("Ver más", style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;"),
+                            ui.tags.div(
                                 ui.tags.div(
                                     ui.tags.div(
-                                        ui.tags.span("Compatibilidad", class_="var-meta-key"),
-                                        ui.tags.div(badge, reason_ui),
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
                                     ),
-                                    ui.tags.div(ui.tags.span("Temporalidad", class_="var-meta-key"), temporalidad),
-                                    ui.tags.div(ui.tags.span("Granularidad", class_="var-meta-key"), granularidad),
-                                    ui.tags.div(ui.tags.span("Unidad medida", class_="var-meta-key"), unidad_medida),
-                                    ui.tags.div(ui.tags.span("Fuente", class_="var-meta-key"), fuente),
-                                    class_="var-meta-grid",
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                 ),
-
-                            ui.tags.div(
-                                ui.tags.span("Descripción", class_="var-meta-key"),
-                                ui.tags.div(descripcion, class_="var-desc"),
-                                style="margin-top:6px;",
+                                style="margin-top: 8px; padding: 8px 0;",
                             ),
-                            class_="var-meta",
                         ),
                         class_="var-item",
                     )
@@ -225,8 +251,9 @@ def predicciones_server(input, output, session):
 
             ui.accordion(*panels, id="acc_predictors", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_2", "← Anterior"),
                 ui.input_action_button("btn_next_2", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
             ),
         )
 
@@ -241,6 +268,11 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     def _sync_predictors_rv():
         predictors_rv.set(selected_predictors())
+
+    @reactive.Effect
+    @reactive.event(input.btn_prev_2)
+    def _go_step_1():
+        current_step.set(1)
 
     @reactive.Effect
     @reactive.event(input.btn_next_2)
@@ -542,10 +574,16 @@ def predicciones_server(input, output, session):
             ui.p("Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
+                ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
-                style="margin-top: 12px;",
+                style="margin-top: 12px; display: flex; gap: 8px;",
         ),
     )
+    @reactive.Effect
+    @reactive.event(input.btn_prev_3)
+    def _go_step_2():
+        current_step.set(2)
+
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
@@ -554,82 +592,214 @@ def predicciones_server(input, output, session):
 
 
 ##########################################################################################
-# Panel 4: Play with Model and Variables
+# Panel 4: Play with Model and Variables (CON BOTÓN: NO calcula hasta pulsar)
 ##########################################################################################
 
+    # ------------------------
+    # Inputs auxiliares
+    # ------------------------
     @reactive.calc
     def exog_choices():
         return list(predictors_rv.get() or [])
 
     @reactive.calc
+    def selected_model():
+        # Evita primer ciclo cuando el input aún no existe
+        if "model_choice" not in input:
+            return "sarimax"  # default
+        return input.model_choice() or "sarimax"
+
+    @reactive.calc
     def exog_selected():
         choices = exog_choices()
 
-        if "sarimax_exogs" not in input:
+        # Espera a que el input exista para no disparar dobles llamadas
+        if "model_exogs" not in input:
             return choices
 
-        sel = input.sarimax_exogs() or []
+        sel = input.model_exogs() or []
         sel = list(sel)
-
         sel = [s for s in sel if s in choices]
         return sel
 
+    # ------------------------
+    # Almacén de resultados (solo se llena al pulsar botón)
+    # ------------------------
+    pred_results_rv = reactive.Value(None)
+    last_sig_rv = reactive.Value(None)
 
     @reactive.calc
-    def sarimax_results():
+    def pred_signature():
+        """
+        Firma del estado de inputs que afecta a la predicción.
+        Si cambia, invalidamos resultados para no mostrar predicciones antiguas.
+        """
         if current_step.get() != 4:
             return None
 
+        model = selected_model()
+        exogs = tuple(exog_selected() or [])
+        target = target_var_rv.get()
+        filters = selected_filters_by_var()
+
+        # filters puede ser dict/list -> lo convertimos a str estable
+        return (model, target, exogs, repr(filters))
+
+    @reactive.effect
+    def _invalidate_prediction_when_inputs_change():
+        sig = pred_signature()
+        if sig is None:
+            return
+
+        last = last_sig_rv.get()
+        if last is not None and sig != last:
+            pred_results_rv.set(None)
+
+    # ------------------------
+    # Cálculo bajo demanda: SOLO al pulsar "Calcula predicción"
+    # ------------------------
+    @reactive.effect
+    @reactive.event(input.calc_pred)
+    def _compute_prediction_on_click():
+        if current_step.get() != 4:
+            return
+
+        # Evita ejecutar si es la primera vez (0 clicks)
+        if input.calc_pred() == 0:
+            return
+
+        # Evita primer ciclo sin inputs montados
+        if "model_exogs" not in input:
+            pred_results_rv.set(None)
+            return
+
+        model = selected_model()
         predictors_used = exog_selected()
 
-        payload = {
-            "target_var": target_var_rv.get(),
-            "predictors": predictors_used,                    
-            "filters_by_var": selected_filters_by_var(),
-            "train_ratio": 0.70,
-            "auto_params": True,    
-            "s": 12,
-            "return_df": True
-        }
+        # ---------- SARIMAX ----------
+        if model == "sarimax":
+            payload = {
+                "target_var": target_var_rv.get(),
+                "predictors": predictors_used,
+                "filters_by_var": selected_filters_by_var(),
+                "train_ratio": 0.70,
+                "auto_params": True,
+                "s": 12,
+                "return_df": True
+            }
 
-        resp = sarimax_run(payload)
+            resp = sarimax_run(payload)
 
-        df = pd.DataFrame(resp["df"]) if resp.get("df") else None
-        if df is None or df.empty:
+            df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+            if df is None or df.empty:
+                pred_results_rv.set(None)
+                last_sig_rv.set(pred_signature())
+                return
+
+            y_col = resp["y_col"]
+            n_train = resp["n_train"]
+            n_test = resp["n_test"]
+
+            test = df.iloc[n_train:n_train + n_test]
+
+            pred_vals = resp["y_pred"]
+            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
+            
+            fig = plot_predictions(
+                df=df,
+                pred=pred_test,
+                title="Predicciones SARIMAX",
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=n_test,
+                holidays_col=None
+            )
+
+            pred_results_rv.set({
+                "model": "sarimax",
+                "mape": resp["mape"],
+                "rmse": resp["rmse"],
+                "mae": resp["mae"],
+                "fig": fig,
+                "order": resp["order"],
+                "seasonal_order": resp["seasonal_order"],
+                "predictors_used": predictors_used,
+            })
+
+        # ---------- XGBOOST ----------
+        elif model == "xgboost":
+            payload = {
+                "target_var": target_var_rv.get(),
+                "predictors": predictors_used,
+                "filters_by_var": selected_filters_by_var(),
+                "train_ratio": 0.70,
+
+                # XGBoost
+                "auto_params": True,
+                "use_target_lags": True,
+                "max_lag": 12,
+                "recursive_forecast": True,
+
+                "return_df": True
+            }
+
+            resp = xgboost_run(payload)
+
+            df = pd.DataFrame(resp["df"]) if resp.get("df") else None
+            if df is None or df.empty:
+                pred_results_rv.set(None)
+                last_sig_rv.set(pred_signature())
+                return
+
+            y_col = resp["y_col"]
+            n_train = resp["n_train"]
+            n_test = resp["n_test"]
+
+            test = df.iloc[n_train:n_train + n_test]
+
+            pred_vals = resp["y_pred"]
+            pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
+
+            fig = plot_predictions(
+                df=df,
+                pred=pred_test,
+                title="Predicciones XGBoost",
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=n_test,
+                holidays_col=None
+            )
+
+            pred_results_rv.set({
+                "model": "xgboost",
+                "mape": resp["mape"],
+                "rmse": resp["rmse"],
+                "mae": resp["mae"],
+                "fig": fig,
+                "xgb_params": resp.get("xgb_params"),
+                "feature_cols": resp.get("feature_cols"),
+                "predictors_used": predictors_used,
+            })
+
+        # Guarda la firma del estado con el que se calculó (para invalidar si cambian inputs)
+        last_sig_rv.set(pred_signature())
+
+    # ------------------------
+    # Plot unificado (usa el almacén, no calcula)
+    # ------------------------
+    @output
+    @render.plot
+    def model_plot():
+        res = pred_results_rv.get()
+        if not res:
             return None
+        return res["fig"]
 
-        y_col = resp["y_col"]
-        n_train = resp["n_train"]
-        n_test = resp["n_test"]
-
-        train = df.iloc[:n_train]
-        test = df.iloc[n_train:n_train + n_test]
-
-        pred_vals = resp["y_pred"]
-        pred_test = pd.Series(pred_vals, index=test.index, name="Prediction")
-
-        fig = plot_predictions(
-            df=df,
-            pred=pred_test,
-            title="Predicciones SARIMAX",
-            ylabel="Valores",
-            xlabel="Fecha",
-            column_y=y_col,
-            periodos_a_predecir=n_test,
-            holidays_col=None
-        )
-
-        return {
-            "mape": resp["mape"],
-            "rmse": resp["rmse"],
-            "mae": resp["mae"],
-            "fig": fig,
-            "order": resp["order"],
-            "seasonal_order": resp["seasonal_order"],
-            "predictors_used": predictors_used,
-        }
-
-
+    # ------------------------
+    # UI Panel 4 (incluye botón y muestra resultados si existen)
+    # ------------------------
     @output
     @render.ui
     def step_panel_4():
@@ -638,35 +808,71 @@ def predicciones_server(input, output, session):
 
         choices = exog_choices()
         selected = exog_selected()
+        model = selected_model()
 
-        res = sarimax_results()
+        # OJO: ahora NO usamos selected_results(); usamos el almacén
+        res = pred_results_rv.get()
+
+        title = "Panel 4: Selección de modelo + exógenas"
+        subtitle = "Elige el modelo y qué exógenas usar. La predicción SOLO se ejecuta cuando pulsas el botón."
+
+        # Cabecera + inputs siempre visibles
+        header = ui.div(
+            PANEL_STYLES,
+            ui.h3(title),
+            ui.p(subtitle),
+
+            ui.input_radio_buttons(
+                "model_choice",
+                "Modelo",
+                choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
+                selected=model,
+                inline=True,
+            ),
+
+            ui.input_checkbox_group(
+                "model_exogs",
+                "Variables exógenas (activar/desactivar)",
+                choices=choices,
+                selected=selected,
+            ),
+
+            ui.input_action_button(
+                "calc_pred",
+                "Calcula predicción",
+                class_="btn-primary",
+            ),
+        )
+        footer = ui.div(
+                ui.input_action_button("btn_prev_4", "← Anterior"),
+                style="margin-top: 12px;",
+            )
+
         if res is None:
             return ui.div(
-                PANEL_STYLES,
-                ui.h3("Panel 4: Resultados del modelo SARIMAX"),
-                ui.p("Configura las variables exógenas y se recalculará el modelo."),
-                ui.input_checkbox_group(
-                    "sarimax_exogs",
-                    "Variables exógenas (activar/desactivar)",
-                    choices=choices,
-                    selected=selected,
-                ),
-                ui.p("Aún no hay resultados (df vacío o error)."),
+                header,
+                ui.p("Pulsa «Calcula predicción» para ejecutar el modelo con la selección actual."),
+                footer
             )
 
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
 
-        return ui.div(
-            PANEL_STYLES,
-            ui.h3("Panel 4: SARIMAX — activar/desactivar exógenas"),
-            ui.p("Marca qué variables exógenas quieres usar. Al cambiar, se recalcula el modelo."),
+        # Texto adicional según modelo
+        extra = ui.div()
+        if res.get("model") == "sarimax":
+            extra = ui.tags.div(
+                ui.tags.div(f"order: {res.get('order')}"),
+                ui.tags.div(f"seasonal_order: {res.get('seasonal_order')}"),
+                style="margin: 8px 0;"
+            )
+        elif res.get("model") == "xgboost":
+            extra = ui.tags.div(
+                ui.tags.div(f"params: {res.get('xgb_params')}"),
+                style="margin: 8px 0;"
+            )
 
-            ui.input_checkbox_group(
-                "sarimax_exogs",
-                "Variables exógenas (activar/desactivar)",
-                choices=choices,
-                selected=selected,  
-            ),
+        return ui.div(
+            header,
 
             ui.tags.div(
                 ui.tags.span("Exógenas activas: ", style="font-weight:600; margin-right:6px;"),
@@ -692,19 +898,14 @@ def predicciones_server(input, output, session):
                 style="margin: 12px 0;"
             ),
 
-            ui.output_plot("sarimax_plot", width="100%", height="420px"),
+            extra,
+
+            ui.output_plot("model_plot", width="100%", height="420px"),
+
+            footer,
         )
 
-
-    @output
-    @render.plot
-    def sarimax_plot():
-        res = sarimax_results()
-        if res is None:
-            return None
-        return res["fig"]
-
-            
-
-
-
+    @reactive.Effect
+    @reactive.event(input.btn_prev_4)
+    def _go_step_3_from_4():
+        current_step.set(3)

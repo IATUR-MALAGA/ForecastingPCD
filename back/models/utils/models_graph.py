@@ -5,13 +5,25 @@ import pandas as pd
 def plot_predictions(
     df,
     pred,
-    title='Tourist Visitors Prediction',
-    ylabel='Number of Tourists',
-    xlabel='Date',
-    column_y='y_turistas',
+    title,
+    ylabel,
+    xlabel,
+    column_y,
     periodos_a_predecir=2,
     holidays_col=None
 ):
+    df = df.copy()
+
+    # Si el índice no es de fechas, lo construimos a partir de anio/mes(/dia)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        if {"anio", "mes"}.issubset(df.columns):
+            if "dia" in df.columns:
+                idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=df["dia"]))
+            else:
+                idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=1))
+            df = df.set_index(idx).sort_index()
+        else:
+            raise ValueError("df debe tener DatetimeIndex o columnas anio/mes(/dia).")
     train = df.iloc[:-periodos_a_predecir]
 
     # Asegura que pred tenga índice de fechas (MUY recomendable)
@@ -45,6 +57,7 @@ def plot_predictions(
         if l and l != "_nolegend_" and l not in uniq:
             uniq[l] = h
     ax.legend(uniq.values(), uniq.keys(), loc="best")
-
+    print(train)
+    print(pred)
     fig.tight_layout()
     return fig   # <-- devuelve figura (más cómodo para Shiny)

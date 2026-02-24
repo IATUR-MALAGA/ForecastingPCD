@@ -5,6 +5,7 @@ import hashlib
 from collections import OrderedDict
 from typing import List, Optional, Union
 
+import numpy as np
 from shiny import ui
 from click import Tuple
 import pandas as pd
@@ -596,6 +597,16 @@ def panel_styles() -> ui.tags.style:
             font-size: 0.85rem;
             color: #57606a;
         }
+        .compat-reason-box {
+            margin-top: 4px;
+            padding: 6px 8px;
+            background: #fef3f2;
+            border-left: 3px solid #f04438;
+            font-size: 0.9em;
+        }
+        .compat-reason-box .reason-text {
+            color: #b42318;
+        }
 
         /* Filtros de calendario PANEL3 */
         .calendar-filter-container {
@@ -721,9 +732,43 @@ def create_dataframe_based_on_selection(
     filters_by_var: dict[str, list[dict]] | None = None,
     cache: PrediccionesCache | None = None,
 ) -> pd.DataFrame:
+    # --- helpers (mínimos) ---
+    _has_col_cache: dict[tuple[str, str], bool] = {}
+
+    def _table_has_col(table: str, col: str) -> bool:
+        key = (table, col)
+        if key in _has_col_cache:
+            return _has_col_cache[key]
+
+        q = sql.SQL("""
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = %s
+              AND table_name = %s
+              AND column_name = %s
+            LIMIT 1
+        """)
+        rows = fetch_data(q, ["IA", table, col])
+        exists = bool(rows)
+        _has_col_cache[key] = exists
+        return exists
+
+    def _detect_time_cols(table: str) -> list[str]:
+        # Detecta qué columnas temporales existen (en orden)
+        cols = []
+        for c in ("anio", "mes", "dia"):
+            if _table_has_col(table, c):
+                cols.append(c)
+        if not cols:
+            raise ValueError(f'La tabla "IA".{table} no tiene columnas temporales (anio/mes/dia).')
+        return cols
+
     # --- Target ---
     target_col, target_table, target_name = get_col_ref_and_table(target_var, cache=cache)
     target_alias = _safe_alias(target_name or target_col)
+
+    # detectamos granularidad temporal del target
+    time_cols = _detect_time_cols(target_table)  # p.ej. ["anio","mes"] o ["anio","mes","dia"] o ["anio"]
 
     where_clauses_target, target_params, group_cols_target = create_where_clauses(
         filters_by_var, target_name, target_table=target_table
@@ -734,12 +779,14 @@ def create_dataframe_based_on_selection(
     if group_cols_target:
         group_select = sql.SQL(", ").join(sql.Identifier(c) for c in group_cols_target) + sql.SQL(", ")
 
+    time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
+
     group_by = sql.SQL(", ").join(
-        [*(sql.Identifier(c) for c in group_cols_target), sql.Identifier("anio"), sql.Identifier("mes")]
+        [*(sql.Identifier(c) for c in group_cols_target), *(sql.Identifier(c) for c in time_cols)]
     )
 
     q_target = sql.SQL("""
-        SELECT {group_select} SUM({col}) AS {alias}, anio, mes
+        SELECT {group_select} SUM({col}) AS {alias}, {time_select}
         FROM "IA".{table}
         WHERE {where}
         GROUP BY {group_by}
@@ -747,22 +794,32 @@ def create_dataframe_based_on_selection(
         group_select=group_select,
         col=sql.Identifier(target_col),
         alias=sql.Identifier(target_alias),
+        time_select=time_select,
         table=sql.Identifier(target_table),
         where=where_sql_target,
         group_by=group_by
     )
 
-    target_cols = [*group_cols_target, target_alias, "anio", "mes"]
+    target_cols = [*group_cols_target, target_alias, *time_cols]
     target_rows = fetch_data(q_target, target_params)
     df = _rows_to_df(target_rows, target_cols)
-
+    
     # claves base del DF target
-    base_keys = [*group_cols_target, "anio", "mes"]
+    base_keys = [*group_cols_target, *time_cols]
 
     # --- Predictors ---
     for i, p in enumerate(predictors, start=1):
         p_col, p_table, p_name = get_col_ref_and_table(p, cache=cache)
         p_alias = _safe_alias(p_name or f"pred_{i}_{p_col}")
+
+        # comprobamos misma granularidad temporal que el target
+        pred_time_cols = _detect_time_cols(p_table)
+        if pred_time_cols != time_cols:
+            raise ValueError(
+                f"Granularidad temporal distinta.\n"
+                f'- Target "IA".{target_table}: {time_cols}\n'
+                f'- Pred   "IA".{p_table}: {pred_time_cols}'
+            )
 
         where_clauses_p, p_params, _group_cols_p = create_where_clauses(
             filters_by_var, p_name, target_table=p_table
@@ -775,13 +832,15 @@ def create_dataframe_based_on_selection(
         if group_cols_pred:
             pred_group_select = sql.SQL(", ").join(sql.Identifier(c) for c in group_cols_pred) + sql.SQL(", ")
 
+        pred_time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
+
         pred_group_by = sql.SQL(", ").join(
-            [*(sql.Identifier(c) for c in group_cols_pred), sql.Identifier("anio"), sql.Identifier("mes")]
+            [*(sql.Identifier(c) for c in group_cols_pred), *(sql.Identifier(c) for c in time_cols)]
         )
 
-        # Agregamos predictor por mes (y por grupo si aplica) para evitar duplicados al merge
+        # Agregamos predictor por la misma granularidad temporal (y por grupo si aplica)
         q_pred = sql.SQL("""
-            SELECT {group_select} SUM({col}) AS {alias}, anio, mes
+            SELECT {group_select} SUM({col}) AS {alias}, {time_select}
             FROM "IA".{table}
             WHERE {where}
             GROUP BY {group_by}
@@ -789,17 +848,18 @@ def create_dataframe_based_on_selection(
             group_select=pred_group_select,
             col=sql.Identifier(p_col),
             alias=sql.Identifier(p_alias),
+            time_select=pred_time_select,
             table=sql.Identifier(p_table),
             where=where_sql_p,
             group_by=pred_group_by
         )
 
-        pred_cols = [*group_cols_pred, p_alias, "anio", "mes"]
+        pred_cols = [*group_cols_pred, p_alias, *time_cols]
         pred_rows = fetch_data(q_pred, p_params)
         df_pred = _rows_to_df(pred_rows, pred_cols)
 
         # Merge: si df_pred no tiene columnas de grupo (porque tabla distinta), se hace por tiempo
-        join_keys = ["anio", "mes"]
+        join_keys = [*time_cols]
         if group_cols_target and group_cols_pred:
             join_keys = base_keys
 
@@ -809,3 +869,72 @@ def create_dataframe_based_on_selection(
         df = df.sort_values(base_keys).reset_index(drop=True)
 
     return df
+
+
+def _find_col(df: pd.DataFrame, *candidates: str):
+    for c in candidates:
+        if c and c in df.columns:
+            return c
+    return None
+
+def add_fourier_annual_terms(
+    df: pd.DataFrame,
+    dia_col: str = "dia",      # día del mes (1..31)
+    K: int = 6,
+    m: int = 365,
+    anio_col: str = "anio",
+    mes_col: str = "mes",
+    fecha_col: str = "fecha",
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Añade términos de Fourier (sen/cos) para anualidad, asumiendo que `dia_col`
+    es el día del mes (1..31) y que existen `anio_col` y `mes_col`.
+
+    Devuelve:
+      - df_modificado (ordenado por fecha)
+      - lista con los nombres de las columnas Fourier creadas
+    """
+    df = df.copy()
+
+    # 1) Normaliza día del mes
+    df[dia_col] = pd.to_numeric(df[dia_col], errors="raise").astype(int)
+    if not df[dia_col].between(1, 31).all():
+        bad = df.loc[~df[dia_col].between(1, 31), dia_col].head(5).tolist()
+        raise ValueError(f"Valores inválidos en '{dia_col}' (deben ser 1..31). Ejemplos: {bad}")
+
+    # 2) Construye fecha diaria real
+    if anio_col not in df.columns or mes_col not in df.columns:
+        raise ValueError(f"Faltan columnas '{anio_col}' y/o '{mes_col}' para construir '{fecha_col}'.")
+
+    df[fecha_col] = pd.to_datetime(
+        dict(
+            year=df[anio_col].astype(int),
+            month=df[mes_col].astype(int),
+            day=df[dia_col],
+        ),
+        errors="raise",
+    )
+
+    # 3) Orden temporal
+    df = df.sort_values(fecha_col)
+
+    # 4) Índice t (días desde el inicio)
+    t = (df[fecha_col] - df[fecha_col].min()).dt.days.to_numpy()
+
+    # 5) Genera Fourier anual
+    cols: list[str] = []
+    for k in range(1, K + 1):
+        ccol = f"fourier_cos{k}_{m}"
+        scol = f"fourier_sin{k}_{m}"
+        df[ccol] = np.cos(2 * np.pi * k * t / m)
+        df[scol] = np.sin(2 * np.pi * k * t / m)
+        cols.extend([ccol, scol])
+
+    return df, cols
+
+
+
+ICON_SVG_INFO = """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
+  <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+  <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+</svg>"""
