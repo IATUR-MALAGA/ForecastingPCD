@@ -16,10 +16,14 @@ from front.utils.utils import (
     stable_id as _stable_id,
     group_by_category as _group_by_category,
     fmt as _fmt,
+    fmt_date_by_temporality as _fmt_date_temp,
     build_name_to_table,
     PrediccionesCache,
     compatibilidad_con_objetivo,
     panel_styles,
+    create_calendar_filter,
+    process_date_range_filters,
+    detect_temporal_filters,
 )
 
 
@@ -247,11 +251,48 @@ def predicciones_server(input, output, session):
     # Panel 3: Config Variables
     ##########################################################################################
     @reactive.Calc
+    def target_selected_range() -> tuple:
+        """Obtiene el rango temporal seleccionado por el usuario en el target"""
+        target = target_var_rv.get()
+        if not target:
+            return (None, None)
+        
+        table = name_to_table.get(target)
+        if not table:
+            rows = get_tableName_for_variable(target) or []
+            table = (rows[0].get("nombre_tabla") if rows else target)
+        
+        filtros = cache.get_filters(table)
+        temp = detect_temporal_filters(filtros)
+        
+        # Si tiene mes o día, usar el date_range selector
+        if temp["mes"] or temp["dia"]:
+            date_input_id = _stable_id("flt", f"{table}__date_range")
+            if date_input_id in input:
+                date_range = input[date_input_id]()
+                if date_range and len(date_range) == 2:
+                    return (date_range[0], date_range[1])
+        
+        # Si tiene año, usar el selector de años
+        elif temp["anio"]:
+            anio_input_id = _stable_id("flt", f"{table}__anio")
+            if anio_input_id in input:
+                vals = input[anio_input_id]()
+                if vals:
+                    years = sorted([int(v) for v in vals])
+                    return (f"{years[0]}-01-01", f"{years[-1]}-12-31")
+        
+        # Si no hay selección, devolver None en lugar del rango completo
+        # Esto evita sobrescribir la selección del usuario
+        return (None, None)
+    
+    @reactive.Calc
     def vars_to_config() -> list[dict]:
         """
         Devuelve una lista de dicts con:
         - pretty: nombre bonito (lo que muestras)
         - table:  nombre real de la tabla (lo que consultas)
+        - is_target: True si es la variable objetivo
         """
         target = target_var_rv.get()
         preds = predictors_rv.get() or []
@@ -269,35 +310,82 @@ def predicciones_server(input, output, session):
                 rows = get_tableName_for_variable(pretty) or []
                 table = (rows[0].get("nombre_tabla") if rows else pretty)
 
-            out.append({"pretty": pretty, "table": table})
+            out.append({
+                "pretty": pretty, 
+                "table": table,
+                "is_target": (pretty == target)
+            })
 
         return out
     
     @reactive.Calc
     def selected_filters_by_var() -> dict[str, list[dict]]:
         out: dict[str, list[dict]] = {}
+        target_var = target_var_rv.get()
+        
+        # Primero capturamos los filtros temporales del target
+        target_temporal_filters = []
 
         for item in vars_to_config():
             pretty = item["pretty"]
             table = item["table"]
+            is_target = item.get("is_target", False)
 
-            filtros = cache.get_filters(table)  
+            filtros = cache.get_filters(table)
             selected_list: list[dict] = []
-
-            for f in filtros:
-                t = f["table"]
-                col = f["col"]
-
-                input_id = _stable_id("flt", f"{t}__{col}")
-
-                vals = input[input_id]() if (input_id in input) else None
-
-                if vals:
+            
+            temp = detect_temporal_filters(filtros)
+            
+            # Solo capturar filtros temporales si ES el target
+            if is_target and (temp["mes"] or temp["dia"]):
+                date_input_id = _stable_id("flt", f"{table}__date_range")
+                if date_input_id in input:
+                    date_range = input[date_input_id]()
+                    if date_range:
+                        temporal_filters = process_date_range_filters(date_range, filtros, table)
+                        selected_list.extend(temporal_filters)
+                        # Guardar para aplicar a las exógenas
+                        target_temporal_filters = temporal_filters
+            
+            elif is_target and temp["anio"]:
+                anio_input_id = _stable_id("flt", f"{table}__anio")
+                if anio_input_id in input:
+                    vals = input[anio_input_id]()
+                    if vals:
+                        temporal_filter = {
+                            "table": table,
+                            "col": temp["anio"]["col"],
+                            "values": list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+                        }
+                        selected_list.append(temporal_filter)
+                        # Guardar para aplicar a las exógenas
+                        target_temporal_filters = [temporal_filter]
+            
+            # Si es exógena, aplicar los filtros temporales del target
+            if not is_target and target_temporal_filters:
+                # Adaptar los filtros del target a esta tabla exógena
+                for tf in target_temporal_filters:
                     selected_list.append({
-                        "table": t,
-                        "col": col,
-                        "values": list(vals),
+                        "table": table,  # Cambiar a la tabla de la exógena
+                        "col": tf["col"],
+                        "values": tf["values"]
                     })
+            
+            # Capturar filtros no temporales para todas las variables
+            for f in filtros:
+                col_lower = f["col"].lower().strip()
+                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                    continue  
+                
+                input_id = _stable_id("flt", f"{f['table']}__{f['col']}")
+                if input_id in input:
+                    vals = input[input_id]()
+                    if vals:
+                        selected_list.append({
+                            "table": f["table"],
+                            "col": f["col"],
+                            "values": list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+                        })
 
             out[pretty] = selected_list
 
@@ -319,22 +407,91 @@ def predicciones_server(input, output, session):
             )
 
         panels = []
+        
+        # Obtener el rango SELECCIONADO del target para mostrarlo en las exógenas
+        target_var = target_var_rv.get()
+        target_start, target_end = target_selected_range()
+        target_meta = cache.get_meta(target_var) if target_var else {}
+        target_temporality = target_meta.get("temporalidad")
+        
+        # Si no hay selección, usar el rango completo disponible solo para mostrar
+        display_start = target_start if target_start else (cache.get_date_range(target_var)[0] if target_var else None)
+        display_end = target_end if target_end else (cache.get_date_range(target_var)[1] if target_var else None)
+        
+        # Formatear las fechas según la temporalidad
+        target_start_fmt = _fmt_date_temp(display_start, target_temporality) if display_start else "—"
+        target_end_fmt = _fmt_date_temp(display_end, target_temporality) if display_end else "—"
+        
+        # Mensaje sobre si está usando selección del usuario o rango completo
+        range_status = "seleccionado" if target_start else "disponible (selecciona un rango en la variable objetivo)"
 
         for item in vars_sel:
             pretty = item["pretty"]   
-            table = item["table"]    
+            table = item["table"]
+            is_target = item.get("is_target", False)
 
             filtros = cache.get_filters(table)
+            
+        
+            start_date, end_date = cache.get_date_range(pretty)
 
             if not filtros:
-                body = ui.p("Sin filtros configurados en tbl_admin_filtros para esta variable/tabla.")
+                if is_target:
+                    body = ui.p("Sin filtros configurados en tbl_admin_filtros para esta variable/tabla.")
+                else:
+                    # Exógena sin filtros: mostrar mensaje sobre el rango del target
+                    body = ui.div(
+                        ui.tags.div(
+                            ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
+                            style="margin-bottom:12px;"
+                        ),
+                        ui.tags.div(
+                            "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;"
+                        ),
+                        ui.tags.div(
+                            ui.tags.span(f"Rango {range_status}: ", style="font-weight:500; margin-top:8px; display:inline-block;"),
+                            ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
+                            style="margin-top:8px;"
+                        )
+                    )
             else:
                 controls = []
+                
+                # Solo mostrar el calendar filter si ES el target
+                if is_target:
+                    calendar = create_calendar_filter(filtros, cache, _stable_id, start_date, end_date, input)
+                    if calendar:
+                        controls.append(calendar)
+                else:
+                    # Para las exógenas, mostrar mensaje informativo
+                    controls.append(
+                        ui.tags.div(
+                            ui.tags.div(
+                                ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
+                                style="margin-bottom:12px;"
+                            ),
+                            ui.tags.div(
+                                "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;"
+                            ),
+                            ui.tags.div(
+                                ui.tags.span(f"Rango {range_status}: ", style="font-weight:500;"),
+                                ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
+                                style="margin-bottom:16px;"
+                            ),
+                            style="margin-bottom:16px;"
+                        )
+                    )
+                
                 for f in filtros:
+                    col_lower = f["col"].lower().strip()
+                    if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                        continue  
+                    
                     t = f["table"]
                     col = f["col"]
                     label = f.get("label") or col  
-
 
                     cols_set = cache.get_table_cols("IA", t)
                     if col not in cols_set:
@@ -342,7 +499,7 @@ def predicciones_server(input, output, session):
                             ui.tags.div(
                                 ui.tags.b(f"{col}"),
                                 ui.tags.span(
-                                    f"  (⚠ no existe en IA.{t})",
+                                    f"  (No existe en IA.{t})",
                                     style="color:#b42318; margin-left:6px;",
                                 ),
                                 style="margin-bottom:10px;",
@@ -351,7 +508,6 @@ def predicciones_server(input, output, session):
                         continue
 
                     input_id = _stable_id("flt", f"{t}__{col}")
-
                     choices = cache.get_distinct("IA", t, col)
 
                     controls.append(
@@ -370,7 +526,7 @@ def predicciones_server(input, output, session):
                         )
                     )
 
-                body = ui.div(*controls)
+                body = ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
 
             panels.append(
                 ui.accordion_panel(

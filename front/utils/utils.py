@@ -56,6 +56,39 @@ def fmt(v) -> str:
     return s if s else "—"
 
 
+def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
+    """
+    Formatea una fecha según la temporalidad.
+    - Mensual: MM/YYYY
+    - Diaria: DD/MM/YYYY
+    - Anual: YYYY
+    - Otro/None: formato completo
+    """
+    if not date_value:
+        return "—"
+    
+    
+    if isinstance(date_value, str):
+        try:
+            date_value = datetime.fromisoformat(date_value[:10]).date()
+        except:
+            return str(date_value)
+    
+    if not temporality:
+        return date_value.strftime('%d/%m/%Y')
+    
+    temp_lower = temporality.strip().lower()
+    
+    if temp_lower in ('mensual', 'mes', 'monthly', 'month'):
+        return date_value.strftime('%m/%Y')
+    elif temp_lower in ('diaria', 'dia', 'día', 'daily', 'day'):
+        return date_value.strftime('%d/%m/%Y')
+    elif temp_lower in ('anual', 'año', 'ano', 'year', 'yearly', 'annual'):
+        return date_value.strftime('%Y')
+    else:
+        return date_value.strftime('%d/%m/%Y')
+
+
 def check_date_and_temporality(
     start_date_1: DateLike,
     start_date_2: DateLike,
@@ -228,6 +261,248 @@ def compatibilidad_con_objetivo(
     return False, "El predictor no cubre el rango del objetivo"
 
 
+def detect_temporal_filters(filtros: list[dict]) -> dict:
+    
+    anio_filter = next((f for f in filtros if f["col"].lower().strip() in ("anio", "año", "ano")), None)
+    mes_filter = next((f for f in filtros if f["col"].lower().strip() == "mes"), None)
+    dia_filter = next((f for f in filtros if f["col"].lower().strip() in ("dia", "día")), None)
+    
+    table = None
+    if anio_filter or mes_filter or dia_filter:
+        table = (anio_filter or mes_filter or dia_filter)["table"]
+    
+    return {
+        "anio": anio_filter,
+        "mes": mes_filter,
+        "dia": dia_filter,
+        "table": table,
+        "has_any": bool(anio_filter or mes_filter or dia_filter)
+    }
+
+
+def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_date=None, end_date=None, current_input=None):
+    temp = detect_temporal_filters(filtros)
+    
+    if not temp["has_any"]:
+        return None
+    
+    anio_filter = temp["anio"]
+    mes_filter = temp["mes"]
+    dia_filter = temp["dia"]
+    table = temp["table"]
+    
+    
+    if start_date and isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date[:10]).date()
+    if end_date and isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date[:10]).date()
+    
+    if anio_filter and not mes_filter and not dia_filter:
+        input_id = stable_id_func("flt", f"{table}__anio")
+        anios = cache.get_distinct("IA", table, anio_filter["col"])
+        anios_sorted = sorted([str(a) for a in anios if a], reverse=True)
+        
+        return ui.tags.div(
+            ui.tags.label("Filtros de Temporalidad", class_="calendar-filter-title"),
+            ui.input_selectize(
+                input_id, "Año", choices=anios_sorted, multiple=True,
+                options={"placeholder": "Selecciona año(s)", "plugins": ["remove_button"]}
+            ),
+            class_="calendar-filter-container"
+        )
+    
+    #
+    if anio_filter and mes_filter and not dia_filter:
+        from datetime import date
+        date_input_id = stable_id_func("flt", f"{table}__date_range")
+        container_id = f"container_{date_input_id}"
+        
+        
+        min_date = start_date if start_date else date(2000, 1, 1)
+        max_date = end_date if end_date else date.today()
+        
+        
+        if current_input and date_input_id in current_input:
+            current_val = current_input[date_input_id]()
+            if current_val and len(current_val) == 2:
+                start_val = current_val[0]
+                end_val = current_val[1]
+            else:
+                start_val = min_date
+                end_val = max_date
+        else:
+            start_val = min_date
+            end_val = max_date
+        
+        return ui.tags.div(
+            ui.tags.label("Filtros de Temporalidad (Mes/Año)", class_="calendar-filter-title"),
+            ui.input_date_range(
+                date_input_id,
+                "Seleccionar Período",
+                start=start_val,
+                end=end_val,
+                min=min_date,
+                max=max_date,
+                format="mm/yyyy",
+                language="es",
+                separator="a",
+                startview="year"
+            ),
+            ui.tags.script(f"""
+                (function() {{
+                    var attempts = 0;
+                    var maxAttempts = 50;
+                    
+                    var interval = setInterval(function() {{
+                        attempts++;
+                        
+                        var $inputs = $('#{date_input_id} input');
+                        if ($inputs.length > 0) {{
+                            var allConfigured = true;
+                            
+                            $inputs.each(function() {{
+                                var $input = $(this);
+                                
+                                // Esperar a que exista el datepicker
+                                if ($input.data('datepicker')) {{
+                                    // Destruir la inicialización de Shiny
+                                    $input.datepicker('destroy');
+                                    
+                                    // Reinicializar con configuración simple
+                                    $input.datepicker({{
+                                        format: "mm-yyyy",
+                                        startView: "months", 
+                                        minViewMode: "months",
+                                        language: "es",
+                                        autoclose: true,
+                                        startDate: new Date({min_date.year}, {min_date.month - 1}, 1),
+                                        endDate: new Date({max_date.year}, {max_date.month - 1}, 1)
+                                    }});
+                                    
+                                    console.log('Datepicker configurado en modo SOLO MESES');
+                                }} else {{
+                                    allConfigured = false;
+                                }}
+                            }});
+                            
+                            if (allConfigured) {{
+                                clearInterval(interval);
+                            }}
+                        }}
+                        
+                        if (attempts >= maxAttempts) {{
+                            clearInterval(interval);
+                        }}
+                    }}, 200);
+                }})();
+            """),
+            ui.tags.small(
+                f"Haz clic en el mes deseado. El día es orientativo, se usará el mes para el entrenamiento. Rango disponible: {min_date.strftime('%m/%Y')} a {max_date.strftime('%m/%Y')}.",
+                style="display: block; color: #57606a; font-size: 0.85em; margin-top: 4px; font-style: italic;"
+            ),
+            id=container_id,
+            class_="calendar-filter-container"
+        )
+    
+    
+    if dia_filter:
+        from datetime import date
+        date_input_id = stable_id_func("flt", f"{table}__date_range")
+        
+        min_date = start_date if start_date else date(2000, 1, 1)
+        max_date = end_date if end_date else date.today()
+        
+        
+        if current_input and date_input_id in current_input:
+            current_val = current_input[date_input_id]()
+            if current_val and len(current_val) == 2:
+                start_val = current_val[0]
+                end_val = current_val[1]
+            else:
+                start_val = min_date
+                end_val = max_date
+        else:
+            start_val = min_date
+            end_val = max_date
+        
+        return ui.tags.div(
+            ui.tags.label("Filtros de Temporalidad", class_="calendar-filter-title"),
+            ui.input_date_range(
+                date_input_id,
+                "Seleccionar Período",
+                start=start_val,
+                end=end_val,
+                min=min_date,
+                max=max_date,
+                format="dd/mm/yyyy",
+                language="es",
+                separator="a"
+            ),
+            class_="calendar-filter-container"
+        )
+    
+    return None
+
+
+def process_date_range_filters(date_range, filtros, table):
+  
+    if not date_range or len(date_range) != 2:
+        return []
+    
+    from datetime import timedelta
+    start_date, end_date = date_range
+    selected_list = []
+    
+    
+    temp = detect_temporal_filters(filtros)
+    
+    
+    if temp["anio"]:
+        anio_col = temp["anio"]["col"]
+        years = list(range(start_date.year, end_date.year + 1))
+        selected_list.append({
+            "table": table,
+            "col": anio_col,
+            "values": [str(y) for y in years]
+        })
+    
+    
+    if temp["mes"]:
+        mes_col = temp["mes"]["col"]
+        months = set()
+        current = start_date
+        while current <= end_date:
+            months.add(current.month)
+            
+            if current.month == 12:
+                from datetime import date
+                current = date(current.year + 1, 1, 1)
+            else:
+                from datetime import date
+                current = date(current.year, current.month + 1, 1)
+        selected_list.append({
+            "table": table,
+            "col": mes_col,
+            "values": [str(m) for m in sorted(months)]
+        })
+    
+    
+    if temp["dia"]:
+        dia_col = temp["dia"]["col"]
+        days = set()
+        current = start_date
+        while current <= end_date:
+            days.add(current.day)
+            current = current + timedelta(days=1)
+        selected_list.append({
+            "table": table,
+            "col": dia_col,
+            "values": [str(d) for d in sorted(days)]
+        })
+    
+    return selected_list
+
+
 def panel_styles() -> ui.tags.style:
     return ui.tags.style(
         """
@@ -321,6 +596,29 @@ def panel_styles() -> ui.tags.style:
             font-size: 0.85rem;
             color: #57606a;
         }
+
+        /* Filtros de calendario PANEL3 */
+        .calendar-filter-container {
+            padding: 12px;
+            background: #f6f8fa;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+
+        .calendar-filter-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: block;
+            color: #0969da;
+        }
+
+        .calendar-controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+       
 
         """
     )
