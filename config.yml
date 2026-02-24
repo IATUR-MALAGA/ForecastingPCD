@@ -1,0 +1,153 @@
+app:
+  name: "ForecastingPCD"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  api_prefix: "/api"
+  title: "Back API"
+  version: "0.1.0"
+  cors:
+    allow_origins: ["*"]
+    allow_credentials: true
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+  routes:
+    database_prefix: "/database"
+    sarimax_prefix: "/models/sarimax"
+    xgboost_prefix: "/models/xgboost"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+paths:
+  # Se resuelven relativo a la raíz del repositorio si no son absolutos.
+  root: "."
+  logs_dir: "logs"
+
+
+db:
+  default_schema: "IA"
+  identifier_regex: "^[A-Za-z_][A-Za-z0-9_]*$"
+  catalog:
+    schema: "IA"
+    variables_table: "tbl_catalogo_variables"
+    filters_table: "tbl_admin_filtro"
+  queries:
+    default_limit: 100
+    default_offset: 0
+    allowed_aggregations: ["SUM", "AVG", "MIN", "MAX"]
+  connection:
+    host: "alcazaba2.uma.es"
+    port: 5432
+    dbname: "unibigdata"
+    user: "unibigdata"
+    password: "unibigdata"
+    connect_timeout: 10
+
+models:
+  common:
+    train_ratio: 0.70
+    return_df: true
+    min_historical_rows: 3
+    horizon: 1
+
+  sarimax:
+    auto_params: true
+    seasonal_period_s: 12
+    target_column: "turistas"
+    default_order: [0, 1, 0]
+    default_seasonal_order: [0, 0, 0, 12]
+    enforce_invertibility: false
+    enforce_stationarity: false
+    auto_search:
+      periodos_a_predecir: 2
+      seasonal: true
+      p_values: [0, 2]
+      d_values: [0, 2]
+      q_values: [0, 2]
+      P_values: [0, 2]
+      D_values: [0, 2]
+      Q_values: [0, 2]
+      test: "adf"
+      stepwise: true
+      trace: true
+      error_action: "trace"
+      suppress_warnings: false
+    fourier:
+      enabled_when_daily: true
+      k: 6
+      m: 365
+
+  xgboost:
+    auto_params: true
+    target_column: "turistas"
+    use_target_lags: true
+    max_lag: 12
+    recursive_forecast: true
+    random_state: 42
+    engine:
+      objective: "reg:squarederror"
+      tree_method: "hist"
+      n_jobs: 1
+    default_params:
+      n_estimators: 400
+      max_depth: 6
+      learning_rate: 0.05
+      min_child_weight: 1
+      subsample: 0.9
+      colsample_bytree: 0.9
+      reg_lambda: 1.0
+      reg_alpha: 0.0
+    auto_search:
+      periodos_a_predecir: 2
+      cv_splits: 3
+      n_iter: 20
+      scoring: "neg_root_mean_squared_error"
+      n_jobs: 1
+      verbose: 2
+      error_score: "raise"
+      param_grid:
+        n_estimators: [100, 200, 400]
+        max_depth: [2, 3, 4, 5]
+        min_child_weight: [1, 5, 10]
+        learning_rate: [0.03, 0.05, 0.1]
+        subsample: [0.7, 0.9, 1.0]
+        colsample_bytree: [0.7, 0.9, 1.0]
+        reg_lambda: [0.0, 1.0, 5.0]
+        reg_alpha: [0.0, 0.1, 1.0]
+  metrics:
+    target_column: "turistas"
+
+plots:
+  predictions:
+    figsize: [12, 4]
+    scatter_size_single_point: 30
+    prediction_scatter_color: "red"
+    fallback_step_days: 30
+    x_axis_padding_steps: 2
+
+# Sección frontend (se mantiene por compatibilidad con app.py/front)
+frontend:
+  shiny:
+    host: "0.0.0.0"
+    port: 8001
+    title: "Sistema de Predicción de Turismo"
+  back_api:
+    base_url: "http://127.0.0.1:8000"
+    timeout_seconds: 600
+
+# Compatibilidad con llaves históricas usadas fuera del backend API
+backend:
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    prefix: "/api"
+    title: "Back API"
+    version: "0.1.0"
+    cors:
+      allow_origins: ["*"]
+      allow_credentials: true
+      allow_methods: ["*"]
+      allow_headers: ["*"]

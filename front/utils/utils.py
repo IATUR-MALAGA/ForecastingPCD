@@ -78,6 +78,52 @@ def check_date_and_temporality(
 
     return (s2 >= s1) and (e2 <= e1)
 
+def diff_en_temporalidad(
+    from_date: DateLike,
+    to_date: DateLike,
+    temporality: str,
+) -> int | None:
+    """
+    Devuelve cuántos pasos (según temporality) hay entre from_date y to_date:
+      - mensual -> meses
+      - trimestral -> trimestres
+      - anual -> años
+      - semanal -> semanas
+      - diaria -> días
+
+    Si to_date < from_date, devuelve un número negativo.
+    Si no reconoce la temporalidad, devuelve None.
+    """
+    if temporality is None:
+        return None
+
+    t = temporality.strip().lower()
+    d1 = _to_date(from_date)
+    d2 = _to_date(to_date)
+
+    # Mensual
+    if "mens" in t or "mes" in t or "month" in t:
+        return (d2.year - d1.year) * 12 + (d2.month - d1.month)
+
+    # Trimestral / Quarterly
+    if "trim" in t or "trimes" in t or "quart" in t:
+        q1 = (d1.month - 1) // 3
+        q2 = (d2.month - 1) // 3
+        return (d2.year - d1.year) * 4 + (q2 - q1)
+
+    # Anual
+    if "anual" in t or "año" in t or "ano" in t or "year" in t:
+        return d2.year - d1.year
+
+    # Semanal
+    if "seman" in t or "week" in t:
+        return (d2 - d1).days // 7
+
+    # Diaria
+    if "diar" in t or "día" in t or "dia" in t or "daily" in t or "day" in t:
+        return (d2 - d1).days
+
+    return None
 
 def _to_date(d: DateLike) -> date:
     if isinstance(d, datetime):
@@ -427,7 +473,6 @@ def create_where_clauses(
 
     return clauses, params, group_cols
 
-#Server
 def create_dataframe_based_on_selection(
     target_var: str,
     predictors: List[str],
@@ -456,7 +501,6 @@ def create_dataframe_based_on_selection(
         return exists
 
     def _detect_time_cols(table: str) -> list[str]:
-        # Detecta qué columnas temporales existen (en orden)
         cols = []
         for c in ("anio", "mes", "dia"):
             if _table_has_col(table, c):
@@ -465,12 +509,44 @@ def create_dataframe_based_on_selection(
             raise ValueError(f'La tabla "IA".{table} no tiene columnas temporales (anio/mes/dia).')
         return cols
 
+    def _dt_series_from_time_cols(df_: pd.DataFrame, time_cols_: list[str]) -> pd.Series:
+        # Convierte (anio, mes, dia) -> datetime (con defaults si faltan cols)
+        year = df_["anio"].astype(int)
+        month = df_["mes"].astype(int) if "mes" in time_cols_ else 1
+        day = df_["dia"].astype(int) if "dia" in time_cols_ else 1
+        return pd.to_datetime({"year": year, "month": month, "day": day}, errors="coerce")
+
+    def _future_dates(target_end_dt: pd.Timestamp, pred_end_dt: pd.Timestamp, time_cols_: list[str]) -> pd.DatetimeIndex:
+        # Genera fechas desde (target_end + 1 paso) hasta pred_end (incluido)
+        if pred_end_dt <= target_end_dt:
+            return pd.DatetimeIndex([])
+
+        if "dia" in time_cols_:
+            start = target_end_dt + pd.Timedelta(days=1)
+            return pd.date_range(start=start, end=pred_end_dt, freq="D")
+        if "mes" in time_cols_:
+            start = target_end_dt + pd.offsets.MonthBegin(1)
+            return pd.date_range(start=start, end=pred_end_dt, freq="MS")
+        # anual
+        start = target_end_dt + pd.offsets.YearBegin(1)
+        return pd.date_range(start=start, end=pred_end_dt, freq="YS")
+
+    def _time_cols_df_from_dates(dates: pd.DatetimeIndex, time_cols_: list[str]) -> pd.DataFrame:
+        out = {}
+        if "anio" in time_cols_:
+            out["anio"] = dates.year.astype(int)
+        if "mes" in time_cols_:
+            out["mes"] = dates.month.astype(int)
+        if "dia" in time_cols_:
+            out["dia"] = dates.day.astype(int)
+        return pd.DataFrame(out)
+
     # --- Target ---
     target_col, target_table, target_name = get_col_ref_and_table(target_var, cache=cache)
     target_alias = _safe_alias(target_name or target_col)
 
-    # detectamos granularidad temporal del target
-    time_cols = _detect_time_cols(target_table)  # p.ej. ["anio","mes"] o ["anio","mes","dia"] o ["anio"]
+    # granularidad temporal del target
+    time_cols = _detect_time_cols(target_table)
 
     where_clauses_target, target_params, group_cols_target = create_where_clauses(
         filters_by_var, target_name, target_table=target_table
@@ -504,17 +580,22 @@ def create_dataframe_based_on_selection(
 
     target_cols = [*group_cols_target, target_alias, *time_cols]
     target_rows = fetch_data(q_target, target_params)
-    df = _rows_to_df(target_rows, target_cols)
-    
+    df_target = _rows_to_df(target_rows, target_cols)
+
     # claves base del DF target
     base_keys = [*group_cols_target, *time_cols]
 
-    # --- Predictors ---
-    for i, p in enumerate(predictors, start=1):
+    if df_target.empty:
+        return df_target
+
+    # --- Predictors (primero los leemos y guardamos; NO merge todavía) ---
+    pred_dfs: list[tuple[pd.DataFrame, list[str]]] = []   # (df_pred, join_keys)
+    min_pred_end_dt: pd.Timestamp | None = None
+
+    for i, p in enumerate(predictors or [], start=1):
         p_col, p_table, p_name = get_col_ref_and_table(p, cache=cache)
         p_alias = _safe_alias(p_name or f"pred_{i}_{p_col}")
 
-        # comprobamos misma granularidad temporal que el target
         pred_time_cols = _detect_time_cols(p_table)
         if pred_time_cols != time_cols:
             raise ValueError(
@@ -528,7 +609,7 @@ def create_dataframe_based_on_selection(
         )
         where_sql_p = sql.SQL(" AND ").join(where_clauses_p) if where_clauses_p else sql.SQL("TRUE")
 
-        # Si predictor está en la MISMA tabla que el target, puedo desglosar por los mismos grupos
+        # Si predictor está en la MISMA tabla que el target, desglosamos por los mismos grupos
         group_cols_pred = group_cols_target if (p_table == target_table) else []
         pred_group_select = sql.SQL("")
         if group_cols_pred:
@@ -540,7 +621,6 @@ def create_dataframe_based_on_selection(
             [*(sql.Identifier(c) for c in group_cols_pred), *(sql.Identifier(c) for c in time_cols)]
         )
 
-        # Agregamos predictor por la misma granularidad temporal (y por grupo si aplica)
         q_pred = sql.SQL("""
             SELECT {group_select} SUM({col}) AS {alias}, {time_select}
             FROM "IA".{table}
@@ -560,17 +640,57 @@ def create_dataframe_based_on_selection(
         pred_rows = fetch_data(q_pred, p_params)
         df_pred = _rows_to_df(pred_rows, pred_cols)
 
-        # Merge: si df_pred no tiene columnas de grupo (porque tabla distinta), se hace por tiempo
+        # join keys
         join_keys = [*time_cols]
         if group_cols_target and group_cols_pred:
             join_keys = base_keys
 
-        df = df.merge(df_pred, on=join_keys, how="left")
+        pred_dfs.append((df_pred, join_keys))
 
-    if not df.empty:
-        df = df.sort_values(base_keys).reset_index(drop=True)
+        # actualizar min_pred_end_dt (solo según columnas temporales)
+        if not df_pred.empty:
+            dt_max = _dt_series_from_time_cols(df_pred, time_cols).max()
+            if pd.notna(dt_max):
+                if min_pred_end_dt is None or dt_max < min_pred_end_dt:
+                    min_pred_end_dt = dt_max
 
-    return df
+    # --- NUEVO: extender el DF del target hasta min_pred_end_dt ---
+    df_base = df_target.copy()
+
+    # target_end_dt (máximo temporal del target)
+    target_end_dt = _dt_series_from_time_cols(df_target, time_cols).max()
+
+    if min_pred_end_dt is not None and pd.notna(target_end_dt) and min_pred_end_dt > target_end_dt:
+        fut_dates = _future_dates(target_end_dt, min_pred_end_dt, time_cols)
+        if len(fut_dates) > 0:
+            df_time_future = _time_cols_df_from_dates(fut_dates, time_cols)
+
+            # cross-join con grupos (si existen)
+            if group_cols_target:
+                df_groups = df_target[group_cols_target].drop_duplicates().copy()
+                df_groups["_k"] = 1
+                df_time_future["_k"] = 1
+                df_future = df_groups.merge(df_time_future, on="_k", how="outer").drop(columns=["_k"])
+            else:
+                df_future = df_time_future
+
+            # objetivo a NaN en futuro
+            df_future[target_alias] = np.nan
+
+            # concatenar histórico + futuro
+            df_base = pd.concat([df_target, df_future], ignore_index=True, sort=False)
+
+    # --- Merge de predictoras sobre el DF extendido ---
+    for df_pred, join_keys in pred_dfs:
+        if df_pred is None or df_pred.empty:
+            continue
+        df_base = df_base.merge(df_pred, on=join_keys, how="left")
+
+    if not df_base.empty:
+        df_base = df_base.sort_values(base_keys).reset_index(drop=True)
+
+    return df_base
+
 
 
 def _find_col(df: pd.DataFrame, *candidates: str):
