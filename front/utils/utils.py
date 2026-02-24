@@ -629,6 +629,40 @@ def panel_styles() -> ui.tags.style:
             gap: 10px;
         }
 
+        /* Separadores Panel 3 */
+        .panel3-section {
+            margin-bottom: 16px;
+        }
+
+        .panel3-section-header {
+            display: flex;
+            align-items: center;
+            font-size: 1rem;
+            font-weight: 700;
+            padding: 8px 14px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            letter-spacing: 0.02em;
+        }
+
+        .panel3-section-target {
+            background: #dff0ff;
+            border-left: 4px solid #0969da;
+            color: #0550ae;
+        }
+
+        .panel3-section-exog {
+            background: #f0f0f0;
+            border-left: 4px solid #6e7781;
+            color: #424a53;
+        }
+
+        .panel3-divider {
+            border: none;
+            border-top: 2px dashed #d0d7de;
+            margin: 18px 0;
+        }
+
        
 
         """
