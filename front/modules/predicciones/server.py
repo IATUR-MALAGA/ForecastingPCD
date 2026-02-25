@@ -9,7 +9,9 @@ from front.utils.back_api_wrappers import (
 from back.models.utils.models_graph import plot_predictions
 
 from front.utils.utils import (
+    ICON_SVG_INFO,
     _to_date,
+    detect_temporal_filters,
     diff_en_temporalidad,
     slug as _slug,  
     stable_id as _stable_id,
@@ -23,8 +25,6 @@ from front.utils.utils import (
     create_calendar_filter,
     process_date_range_filters,
     detect_temporal_filters,
-    ICON_SVG_INFO
-
 )
 
 
@@ -505,8 +505,7 @@ def predicciones_server(input, output, session):
                 ui.p("No hay variables seleccionadas para configurar."),
             )
 
-        target_panels = []
-        exog_panels = []
+        panels = []
         
         # Obtener el rango SELECCIONADO del target para mostrarlo en las exógenas
         target_var = target_var_rv.get()
@@ -542,7 +541,7 @@ def predicciones_server(input, output, session):
                     # Exógena sin filtros: mostrar mensaje sobre el rango del target
                     body = ui.div(
                         ui.tags.div(
-                            ui.tags.span("Variable Exógena", style="font-weight:600; color:#6e7781;"),
+                            ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
                             style="margin-bottom:12px;"
                         ),
                         ui.tags.div(
@@ -568,7 +567,7 @@ def predicciones_server(input, output, session):
                     controls.append(
                         ui.tags.div(
                             ui.tags.div(
-                                ui.tags.span("Variable Exógena", style="font-weight:600; color:#6e7781;"),
+                                ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
                                 style="margin-bottom:12px;"
                             ),
                             ui.tags.div(
@@ -628,45 +627,19 @@ def predicciones_server(input, output, session):
 
                 body = ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
 
-            panel_item = ui.accordion_panel(
-                pretty,
-                body,
-                value=_slug(table),
+            panels.append(
+                ui.accordion_panel(
+                    pretty,
+                    body,
+                    value=_slug(table),
+                )
             )
-            if is_target:
-                target_panels.append(panel_item)
-            else:
-                exog_panels.append(panel_item)
-
-        # Sección variable objetivo
-        section_target = ui.tags.div(
-            ui.tags.div(
-                ui.tags.span("", style="margin-right:8px;"),
-                ui.tags.span("Variable Objetivo"),
-                class_="panel3-section-header panel3-section-target",
-            ),
-            ui.accordion(*target_panels, id="acc_filters_target", open=True, multiple=True) if target_panels else ui.p("Sin variable objetivo."),
-            class_="panel3-section",
-        )
-
-        # Separador + sección exógenas
-        section_exog = ui.tags.div(
-            ui.tags.div(
-                ui.tags.span("", style="margin-right:8px;"),
-                ui.tags.span("Variables Exógenas"),
-                class_="panel3-section-header panel3-section-exog",
-            ),
-            ui.accordion(*exog_panels, id="acc_filters_exog", open=True, multiple=True) if exog_panels else ui.p("No hay variables exógenas seleccionadas.", style="color:#57606a; font-style:italic;"),
-            class_="panel3-section",
-        ) if exog_panels is not None else ui.div()
 
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 3: configurar filtros"),
             ui.p("Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."),
-            section_target,
-            ui.tags.hr(class_="panel3-divider"),
-            section_exog,
+            ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
