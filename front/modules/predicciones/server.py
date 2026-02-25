@@ -9,7 +9,9 @@ from front.utils.back_api_wrappers import (
 from back.models.utils.models_graph import plot_predictions
 
 from front.utils.utils import (
+    ICON_SVG_INFO,
     _to_date,
+    detect_temporal_filters,
     diff_en_temporalidad,
     slug as _slug,  
     stable_id as _stable_id,
@@ -20,13 +22,9 @@ from front.utils.utils import (
     PrediccionesCache,
     compatibilidad_con_objetivo,
     panel_styles,
-<<<<<<< HEAD
     create_calendar_filter,
     process_date_range_filters,
     detect_temporal_filters,
-=======
-    ICON_SVG_INFO,
->>>>>>> origin/main
 )
 
 
