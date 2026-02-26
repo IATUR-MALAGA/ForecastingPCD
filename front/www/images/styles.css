@@ -980,3 +980,49 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 }
+
+.home-choice-grid {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin: 28px 0 10px;
+  flex-wrap: wrap;
+}
+
+.home-choice-card,
+.home-choice-card.btn,
+.home-choice-card.btn.btn-default,
+.home-choice-card.btn.btn-primary {
+  min-width: 260px;
+  min-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.home-choice-card:hover,
+.home-choice-card.btn:hover,
+.home-choice-card.btn.btn-default:hover,
+.home-choice-card.btn.btn-primary:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+  background: var(--bg-hover);
+  border-color: var(--primary);
+  color: var(--text-primary);
+}
+
+.module-wrapper {
+  margin-top: 14px;
+}
+
+.module-back-row {
+  margin: 0 0 12px;
+}
