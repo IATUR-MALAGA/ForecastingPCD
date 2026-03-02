@@ -300,7 +300,13 @@ def _select_params(
                     periodos_a_predecir=n_test,
                     seasonal=True,
                 )
-            except Exception:
+            except Exception as e:
+                msg = str(e).lower()
+                if (
+                    "no more samples after a first-order seasonal differencing"
+                    not in msg
+                ):
+                    raise
                 order, _ = best_sarimax_params(
                     df=df_hist,
                     exog_cols=exog_cols,
