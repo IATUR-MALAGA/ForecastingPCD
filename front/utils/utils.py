@@ -3,11 +3,10 @@ from datetime import date, datetime
 import re
 import hashlib
 from collections import OrderedDict
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 from shiny import ui
-from click import Tuple
 import pandas as pd
 from psycopg import sql
 
@@ -793,31 +792,32 @@ def create_where_clauses(
             month_col = f.get("month_col")
             day_col = f.get("day_col")
 
-            if start and end and year_col:
-                if day_col and month_col:
-                    date_expr = sql.SQL(
-                        "make_date({y}::int, {m}::int, {d}::int)"
-                    ).format(
-                        y=sql.Identifier(year_col),
-                        m=sql.Identifier(month_col),
-                        d=sql.Identifier(day_col),
-                    )
-                elif month_col:
-                    date_expr = sql.SQL("make_date({y}::int, {m}::int, 1)").format(
-                        y=sql.Identifier(year_col),
-                        m=sql.Identifier(month_col),
-                    )
-                else:
-                    date_expr = sql.SQL("make_date({y}::int, 1, 1)").format(
-                        y=sql.Identifier(year_col),
-                    )
-
-                clauses.append(
-                    sql.SQL("{expr} BETWEEN %s::date AND %s::date").format(
-                        expr=date_expr
-                    )
+            if not (start and end and year_col):
+                raise ValueError(
+                    f"Filtro 'date_range' incompleto para '{var_name}': "
+                    f"se requieren start, end y year_col. Recibido: {f!r}"
                 )
-                params.extend([start, end])
+
+            if day_col and month_col:
+                date_expr = sql.SQL("make_date({y}::int, {m}::int, {d}::int)").format(
+                    y=sql.Identifier(year_col),
+                    m=sql.Identifier(month_col),
+                    d=sql.Identifier(day_col),
+                )
+            elif month_col:
+                date_expr = sql.SQL("make_date({y}::int, {m}::int, 1)").format(
+                    y=sql.Identifier(year_col),
+                    m=sql.Identifier(month_col),
+                )
+            else:
+                date_expr = sql.SQL("make_date({y}::int, 1, 1)").format(
+                    y=sql.Identifier(year_col),
+                )
+
+            clauses.append(
+                sql.SQL("{expr} BETWEEN %s::date AND %s::date").format(expr=date_expr)
+            )
+            params.extend([start, end])
             continue
 
         if column and values:
