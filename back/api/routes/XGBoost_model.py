@@ -489,6 +489,7 @@ def xgboost_run(req: XGBoostRunRequest):
                     random_state=int(XGBOOST_CFG.get("random_state", 42)),
                 )
                 xgb_params = {
+                    **XGB_DEFAULT_PARAMS_CFG,
                     "objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"),
                     "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"),
                     "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)),
