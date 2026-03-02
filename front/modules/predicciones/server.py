@@ -13,7 +13,7 @@ from front.utils.utils import (
     _to_date,
     detect_temporal_filters,
     diff_en_temporalidad,
-    slug as _slug,  
+    slug as _slug,
     stable_id as _stable_id,
     group_by_category as _group_by_category,
     fmt as _fmt,
@@ -33,11 +33,10 @@ from front.utils.utils import (
 # -----------------------------
 @module.server
 def predicciones_server(input, output, session):
-
     current_step = reactive.Value(1)
 
-    target_var_rv = reactive.Value(None)      
-    predictors_rv = reactive.Value([])        
+    target_var_rv = reactive.Value(None)
+    predictors_rv = reactive.Value([])
 
     catalog_entries = get_names_in_table_catalog() or []
     name_to_table = build_name_to_table(catalog_entries)
@@ -81,7 +80,9 @@ def predicciones_server(input, output, session):
                     ui.input_action_button(
                         btn_id,
                         name,
-                        class_=("var-pick is-selected" if name == selected else "var-pick"),
+                        class_=(
+                            "var-pick is-selected" if name == selected else "var-pick"
+                        ),
                     )
                 )
 
@@ -138,7 +139,9 @@ def predicciones_server(input, output, session):
         target_var = target_var_rv.get()
         grouped = _group_by_category(catalog_entries, exclude_name=target_var)
         target_meta = cache.get_meta(target_var) if target_var else {}
-        target_start, target_end = cache.get_date_range(target_var) if target_var else (None, None)
+        target_start, target_end = (
+            cache.get_date_range(target_var) if target_var else (None, None)
+        )
         target_temp = _fmt(target_meta.get("temporalidad"))
         panels = []
         for cat, names in grouped.items():
@@ -159,7 +162,11 @@ def predicciones_server(input, output, session):
 
                 badge = ui.tags.span(
                     "Compatible" if compat else "No compatible",
-                    class_=("compat-badge compat-yes" if compat else "compat-badge compat-no"),
+                    class_=(
+                        "compat-badge compat-yes"
+                        if compat
+                        else "compat-badge compat-no"
+                    ),
                 )
 
                 info_icon = None
@@ -176,16 +183,25 @@ def predicciones_server(input, output, session):
                 fuente = _fmt(meta.get("fuente"))
                 descripcion = _fmt(meta.get("descripcion"))
 
+                selector = (
+                    ui.input_checkbox(var_id, name, value=False)
+                    if compat
+                    else ui.tags.span(name, style="font-weight:600; color:#6e7781;")
+                )
+
                 var_blocks.append(
                     ui.tags.div(
                         ui.tags.div(
-                            ui.input_checkbox(var_id, name, value=False),
+                            selector,
                             badge,
                             info_icon,
                             style="display: flex; align-items: baseline; gap: 6px;",
                         ),
                         ui.tags.details(
-                            ui.tags.summary("Ver más", style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;"),
+                            ui.tags.summary(
+                                "Ver más",
+                                style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;",
+                            ),
                             ui.tags.div(
                                 ui.tags.div(
                                     ui.tags.div(
@@ -241,15 +257,15 @@ def predicciones_server(input, output, session):
                 ui.tags.div(
                     ui.tags.span("Temporalidad: ", style="font-weight:600;"),
                     ui.tags.span(target_temp),
-                    ui.tags.span("  ·  Rango: ", style="font-weight:600; margin-left:10px;"),
+                    ui.tags.span(
+                        "  ·  Rango: ", style="font-weight:600; margin-left:10px;"
+                    ),
                     ui.tags.span(f"{_fmt(target_start)} → {_fmt(target_end)}"),
                     style="margin-top:4px;",
                 ),
                 ui.output_ui("max_preds_line"),  # <-- NUEVO: se renderiza aparte
                 class_="selection-pill",
             ),
-
-
             ui.accordion(*panels, id="acc_predictors", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("btn_prev_2", "← Anterior"),
@@ -260,11 +276,32 @@ def predicciones_server(input, output, session):
 
     @reactive.Calc
     def selected_predictors():
+        target_var = target_var_rv.get()
+        if not target_var:
+            return []
+
+        target_meta = cache.get_meta(target_var) or {}
+        target_start, target_end = cache.get_date_range(target_var)
+
         selected = []
         for var_id, name in predictor_pairs():
-            if var_id in input and input[var_id]():
+            if not (var_id in input and input[var_id]()):
+                continue
+
+            p_meta = cache.get_meta(name) or {}
+            compat, _ = compatibilidad_con_objetivo(
+                predictor_name=name,
+                predictor_meta=p_meta,
+                target_name=target_var,
+                target_meta=target_meta,
+                target_start=target_start,
+                target_end=target_end,
+                cache=cache,
+            )
+            if compat:
                 selected.append(name)
         return sorted(set(selected))
+
     @output
     @render.ui
     def max_preds_line():
@@ -290,7 +327,9 @@ def predicciones_server(input, output, session):
         target_meta = cache.get_meta(target_var) or {}
         tgt_temp = target_meta.get("temporalidad")
 
-        target_start, target_end = cache.get_date_range(target_var)
+        target_start, target_end = target_selected_range()
+        if target_start is None or target_end is None:
+            target_start, target_end = cache.get_date_range(target_var)
         if target_end is None or tgt_temp is None:
             return None
 
@@ -355,15 +394,15 @@ def predicciones_server(input, output, session):
         target = target_var_rv.get()
         if not target:
             return (None, None)
-        
+
         table = name_to_table.get(target)
         if not table:
             rows = get_tableName_for_variable(target) or []
-            table = (rows[0].get("nombre_tabla") if rows else target)
-        
+            table = rows[0].get("nombre_tabla") if rows else target
+
         filtros = cache.get_filters(table)
         temp = detect_temporal_filters(filtros)
-        
+
         # Si tiene mes o día, usar el date_range selector
         if temp["mes"] or temp["dia"]:
             date_input_id = _stable_id("flt", f"{table}__date_range")
@@ -371,7 +410,7 @@ def predicciones_server(input, output, session):
                 date_range = input[date_input_id]()
                 if date_range and len(date_range) == 2:
                     return (date_range[0], date_range[1])
-        
+
         # Si tiene año, usar el selector de años
         elif temp["anio"]:
             anio_input_id = _stable_id("flt", f"{table}__anio")
@@ -380,11 +419,11 @@ def predicciones_server(input, output, session):
                 if vals:
                     years = sorted([int(v) for v in vals])
                     return (f"{years[0]}-01-01", f"{years[-1]}-12-31")
-        
+
         # Si no hay selección, devolver None en lugar del rango completo
         # Esto evita sobrescribir la selección del usuario
         return (None, None)
-    
+
     @reactive.Calc
     def vars_to_config() -> list[dict]:
         """
@@ -407,21 +446,26 @@ def predicciones_server(input, output, session):
 
             if not table:
                 rows = get_tableName_for_variable(pretty) or []
-                table = (rows[0].get("nombre_tabla") if rows else pretty)
+                table = rows[0].get("nombre_tabla") if rows else pretty
 
-            out.append({
-                "pretty": pretty, 
-                "table": table,
-                "is_target": (pretty == target)
-            })
+            out.append(
+                {"pretty": pretty, "table": table, "is_target": (pretty == target)}
+            )
 
         return out
-    
+
     @reactive.Calc
     def selected_filters_by_var() -> dict[str, list[dict]]:
         out: dict[str, list[dict]] = {}
         target_var = target_var_rv.get()
-        
+
+        extend_steps = 0
+        if "pred_horizon" in input:
+            try:
+                extend_steps = max(0, int(input.pred_horizon() or 0))
+            except Exception:
+                extend_steps = 0
+
         # Primero capturamos los filtros temporales del target
         target_temporal_filters = []
 
@@ -432,20 +476,22 @@ def predicciones_server(input, output, session):
 
             filtros = cache.get_filters(table)
             selected_list: list[dict] = []
-            
+
             temp = detect_temporal_filters(filtros)
-            
+
             # Solo capturar filtros temporales si ES el target
             if is_target and (temp["mes"] or temp["dia"]):
                 date_input_id = _stable_id("flt", f"{table}__date_range")
                 if date_input_id in input:
                     date_range = input[date_input_id]()
                     if date_range:
-                        temporal_filters = process_date_range_filters(date_range, filtros, table)
+                        temporal_filters = process_date_range_filters(
+                            date_range, filtros, table
+                        )
                         selected_list.extend(temporal_filters)
                         # Guardar para aplicar a las exógenas
                         target_temporal_filters = temporal_filters
-            
+
             elif is_target and temp["anio"]:
                 anio_input_id = _stable_id("flt", f"{table}__anio")
                 if anio_input_id in input:
@@ -454,42 +500,67 @@ def predicciones_server(input, output, session):
                         temporal_filter = {
                             "table": table,
                             "col": temp["anio"]["col"],
-                            "values": list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+                            "values": list(vals)
+                            if isinstance(vals, (list, tuple))
+                            else [str(vals)],
                         }
                         selected_list.append(temporal_filter)
                         # Guardar para aplicar a las exógenas
                         target_temporal_filters = [temporal_filter]
-            
+
             # Si es exógena, aplicar los filtros temporales del target
             if not is_target and target_temporal_filters:
                 # Adaptar los filtros del target a esta tabla exógena
                 for tf in target_temporal_filters:
-                    selected_list.append({
-                        "table": table,  # Cambiar a la tabla de la exógena
-                        "col": tf["col"],
-                        "values": tf["values"]
-                    })
-            
+                    if (
+                        tf.get("kind") == "date_range"
+                        or tf.get("col") == "__date_range__"
+                    ):
+                        tf_copy = dict(tf)
+                        tf_copy["table"] = table
+                        if extend_steps > 0 and tf_copy.get("end"):
+                            end_dt = pd.to_datetime(tf_copy.get("end"), errors="coerce")
+                            if pd.notna(end_dt):
+                                if tf_copy.get("day_col"):
+                                    end_dt = end_dt + pd.Timedelta(days=extend_steps)
+                                elif tf_copy.get("month_col"):
+                                    end_dt = end_dt + pd.DateOffset(months=extend_steps)
+                                else:
+                                    end_dt = end_dt + pd.DateOffset(years=extend_steps)
+                                tf_copy["end"] = end_dt.date().isoformat()
+                        selected_list.append(tf_copy)
+                    else:
+                        selected_list.append(
+                            {
+                                "table": table,  # Cambiar a la tabla de la exógena
+                                "col": tf["col"],
+                                "values": tf["values"],
+                            }
+                        )
+
             # Capturar filtros no temporales para todas las variables
             for f in filtros:
                 col_lower = f["col"].lower().strip()
                 if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                    continue  
-                
+                    continue
+
                 input_id = _stable_id("flt", f"{f['table']}__{f['col']}")
                 if input_id in input:
                     vals = input[input_id]()
                     if vals:
-                        selected_list.append({
-                            "table": f["table"],
-                            "col": f["col"],
-                            "values": list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
-                        })
+                        selected_list.append(
+                            {
+                                "table": f["table"],
+                                "col": f["col"],
+                                "values": list(vals)
+                                if isinstance(vals, (list, tuple))
+                                else [str(vals)],
+                            }
+                        )
 
             out[pretty] = selected_list
 
         return out
-
 
     @output
     @render.ui
@@ -506,60 +577,85 @@ def predicciones_server(input, output, session):
             )
 
         panels = []
-        
+
         # Obtener el rango SELECCIONADO del target para mostrarlo en las exógenas
         target_var = target_var_rv.get()
         target_start, target_end = target_selected_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
-        
+
         # Si no hay selección, usar el rango completo disponible solo para mostrar
-        display_start = target_start if target_start else (cache.get_date_range(target_var)[0] if target_var else None)
-        display_end = target_end if target_end else (cache.get_date_range(target_var)[1] if target_var else None)
-        
+        display_start = (
+            target_start
+            if target_start
+            else (cache.get_date_range(target_var)[0] if target_var else None)
+        )
+        display_end = (
+            target_end
+            if target_end
+            else (cache.get_date_range(target_var)[1] if target_var else None)
+        )
+
         # Formatear las fechas según la temporalidad
-        target_start_fmt = _fmt_date_temp(display_start, target_temporality) if display_start else "—"
-        target_end_fmt = _fmt_date_temp(display_end, target_temporality) if display_end else "—"
-        
+        target_start_fmt = (
+            _fmt_date_temp(display_start, target_temporality) if display_start else "—"
+        )
+        target_end_fmt = (
+            _fmt_date_temp(display_end, target_temporality) if display_end else "—"
+        )
+
         # Mensaje sobre si está usando selección del usuario o rango completo
-        range_status = "seleccionado" if target_start else "disponible (selecciona un rango en la variable objetivo)"
+        range_status = (
+            "seleccionado"
+            if target_start
+            else "disponible (selecciona un rango en la variable objetivo)"
+        )
 
         for item in vars_sel:
-            pretty = item["pretty"]   
+            pretty = item["pretty"]
             table = item["table"]
             is_target = item.get("is_target", False)
 
             filtros = cache.get_filters(table)
-            
-        
+
             start_date, end_date = cache.get_date_range(pretty)
 
             if not filtros:
                 if is_target:
-                    body = ui.p("Sin filtros configurados en tbl_admin_filtros para esta variable/tabla.")
+                    body = ui.p(
+                        "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
+                    )
                 else:
                     # Exógena sin filtros: mostrar mensaje sobre el rango del target
                     body = ui.div(
                         ui.tags.div(
-                            ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
-                            style="margin-bottom:12px;"
+                            ui.tags.span(
+                                "📌 Variable Exógena",
+                                style="font-weight:600; color:#6e7781;",
+                            ),
+                            style="margin-bottom:12px;",
                         ),
                         ui.tags.div(
                             "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
-                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;"
+                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;",
                         ),
                         ui.tags.div(
-                            ui.tags.span(f"Rango {range_status}: ", style="font-weight:500; margin-top:8px; display:inline-block;"),
+                            ui.tags.span(
+                                f"Rango {range_status}: ",
+                                style="font-weight:500; margin-top:8px; display:inline-block;",
+                            ),
                             ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                            style="margin-top:8px;"
-                        )
+                            style="margin-top:8px;",
+                        ),
                     )
             else:
                 controls = []
-                
+
                 # Solo mostrar el calendar filter si ES el target
                 if is_target:
-                    calendar = create_calendar_filter(filtros, cache, _stable_id, start_date, end_date, input)
+                    calendar = create_calendar_filter(
+                        filtros, cache, _stable_id, start_date, end_date, input
+                    )
                     if calendar:
                         controls.append(calendar)
                 else:
@@ -567,30 +663,35 @@ def predicciones_server(input, output, session):
                     controls.append(
                         ui.tags.div(
                             ui.tags.div(
-                                ui.tags.span("📌 Variable Exógena", style="font-weight:600; color:#6e7781;"),
-                                style="margin-bottom:12px;"
+                                ui.tags.span(
+                                    "📌 Variable Exógena",
+                                    style="font-weight:600; color:#6e7781;",
+                                ),
+                                style="margin-bottom:12px;",
                             ),
                             ui.tags.div(
                                 "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
-                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;"
+                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;",
                             ),
                             ui.tags.div(
-                                ui.tags.span(f"Rango {range_status}: ", style="font-weight:500;"),
+                                ui.tags.span(
+                                    f"Rango {range_status}: ", style="font-weight:500;"
+                                ),
                                 ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                                style="margin-bottom:16px;"
+                                style="margin-bottom:16px;",
                             ),
-                            style="margin-bottom:16px;"
+                            style="margin-bottom:16px;",
                         )
                     )
-                
+
                 for f in filtros:
                     col_lower = f["col"].lower().strip()
                     if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                        continue  
-                    
+                        continue
+
                     t = f["table"]
                     col = f["col"]
-                    label = f.get("label") or col  
+                    label = f.get("label") or col
 
                     cols_set = cache.get_table_cols("IA", t)
                     if col not in cols_set:
@@ -625,7 +726,9 @@ def predicciones_server(input, output, session):
                         )
                     )
 
-                body = ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
+                body = (
+                    ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
+                )
 
             panels.append(
                 ui.accordion_panel(
@@ -638,14 +741,17 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 3: configurar filtros"),
-            ui.p("Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."),
+            ui.p(
+                "Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."
+            ),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
                 style="margin-top: 12px; display: flex; gap: 8px;",
-        ),
-    )
+            ),
+        )
+
     @reactive.Effect
     @reactive.event(input.btn_prev_3)
     def _go_step_2():
@@ -656,10 +762,9 @@ def predicciones_server(input, output, session):
     def _go_step_4():
         current_step.set(4)
 
-
-##########################################################################################
-# Panel 4: Play with Model and Variables (CON BOTÓN: NO calcula hasta pulsar)
-##########################################################################################
+    ##########################################################################################
+    # Panel 4: Play with Model and Variables (CON BOTÓN: NO calcula hasta pulsar)
+    ##########################################################################################
 
     # ------------------------
     # Helpers (puros) Panel 4
@@ -669,7 +774,9 @@ def predicciones_server(input, output, session):
         "xgboost": xgboost_run,
     }
 
-    def _build_payload(model: str, target: str, predictors_used: list[str], filters: dict, horizon: int) -> dict:
+    def _build_payload(
+        model: str, target: str, predictors_used: list[str], filters: dict, horizon: int
+    ) -> dict:
         base = {
             "target_var": target,
             "predictors": list(predictors_used or []),
@@ -683,11 +790,13 @@ def predicciones_server(input, output, session):
         if model == "sarimax":
             base.update({"s": 12})
         elif model == "xgboost":
-            base.update({
-                "use_target_lags": True,
-                "max_lag": 12,
-                "recursive_forecast": True,
-            })
+            base.update(
+                {
+                    "use_target_lags": True,
+                    "max_lag": 12,
+                    "recursive_forecast": True,
+                }
+            )
         return base
 
     def _parse_forecast_response(resp: dict):
@@ -699,12 +808,14 @@ def predicciones_server(input, output, session):
         n_obs = int(resp["n_obs"])
         h = int(resp["horizon"])
 
-        future = df.iloc[n_obs:n_obs + h]
+        future = df.iloc[n_obs : n_obs + h]
         pred_vals = resp["y_forecast"]
         pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 
-    def _build_pred_df(future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y") -> pd.DataFrame:
+    def _build_pred_df(
+        future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y"
+    ) -> pd.DataFrame:
         # Repite la lógica de plot_predictions: anio/mes(/dia) -> fechas reales
         if {"anio", "mes"}.issubset(future.columns):
             if "dia" in future.columns:
@@ -721,10 +832,19 @@ def predicciones_server(input, output, session):
             fechas = future.index  # fallback
 
         pred_df = pd.DataFrame({"Fecha": fechas, "Predicción": pred_vals})
-        pred_df["Fecha"] = pd.to_datetime(pred_df["Fecha"], errors="coerce").dt.strftime(date_fmt)
+        pred_df["Fecha"] = pd.to_datetime(
+            pred_df["Fecha"], errors="coerce"
+        ).dt.strftime(date_fmt)
         return pred_df
 
-    def _pack_result(model: str, resp: dict, fig, pred_df: pd.DataFrame, predictors_used: list[str], h: int) -> dict:
+    def _pack_result(
+        model: str,
+        resp: dict,
+        fig,
+        pred_df: pd.DataFrame,
+        predictors_used: list[str],
+        h: int,
+    ) -> dict:
         base = {
             "model": model,
             "mape": resp["mape"],
@@ -738,20 +858,27 @@ def predicciones_server(input, output, session):
 
         # Extra por modelo (para mostrar en UI)
         if model == "sarimax":
-            base.update({
-                "order": resp.get("order"),
-                "seasonal_order": resp.get("seasonal_order"),
-            })
+            base.update(
+                {
+                    "order": resp.get("order"),
+                    "seasonal_order": resp.get("seasonal_order"),
+                }
+            )
         elif model == "xgboost":
-            base.update({
-                "xgb_params": resp.get("xgb_params"),
-                "feature_cols": resp.get("feature_cols"),
-            })
+            base.update(
+                {
+                    "xgb_params": resp.get("xgb_params"),
+                    "feature_cols": resp.get("feature_cols"),
+                }
+            )
         return base
 
     def _kpi_card(label: str, value: str):
         return ui.tags.div(
-            ui.tags.div(_metric_label_with_info(label), style="font-size:12px; color:#6b7280; margin-bottom:4px;"),
+            ui.tags.div(
+                _metric_label_with_info(label),
+                style="font-size:12px; color:#6b7280; margin-bottom:4px;",
+            ),
             ui.tags.div(value, style="font-size:20px; font-weight:700;"),
             style=(
                 "flex: 1 1 160px; padding: 10px 12px; border: 1px solid #e5e7eb; "
@@ -776,14 +903,18 @@ def predicciones_server(input, output, session):
 
     def _metric_info_tooltip(description: str):
         return ui.tooltip(
-            ui.tags.span(ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"),
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO), style="display:inline-flex; cursor:help;"
+            ),
             description,
         )
 
     def _metric_label_with_info(label: str):
         return ui.tags.div(
             ui.tags.span(label),
-            _metric_info_tooltip(METRIC_DESCRIPTIONS.get(label, "Métrica de error del modelo.")),
+            _metric_info_tooltip(
+                METRIC_DESCRIPTIONS.get(label, "Métrica de error del modelo.")
+            ),
             style="display:flex; align-items:center; gap:6px;",
         )
 
@@ -908,7 +1039,9 @@ def predicciones_server(input, output, session):
         fig = plot_predictions(
             df=df,
             pred=pred_series,
-            title=("Predicciones SARIMAX" if model == "sarimax" else "Predicciones XGBoost"),
+            title=(
+                "Predicciones SARIMAX" if model == "sarimax" else "Predicciones XGBoost"
+            ),
             ylabel="Valores",
             xlabel="Fecha",
             column_y=y_col,
@@ -962,16 +1095,16 @@ def predicciones_server(input, output, session):
         # Header (inputs)
         header = ui.card(
             ui.tags.div(
-                ui.h3("Panel 4: Modelo y exógenas", style="margin:0; text-align:center;"),
+                ui.h3(
+                    "Panel 4: Modelo y exógenas", style="margin:0; text-align:center;"
+                ),
                 ui.tags.div(
                     "Elige el modelo y las exógenas. La predicción SOLO se ejecuta al pulsar el botón.",
                     style="color:#6b7280; margin-top:4px; text-align:center;",
                 ),
                 style="width:100%;",
             ),
-
             ui.tags.hr(style="margin:12px 0;"),
-
             ui.tags.div(
                 ui.tags.div(
                     ui.input_radio_buttons(
@@ -994,7 +1127,6 @@ def predicciones_server(input, output, session):
                 ),
                 style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;",
             ),
-
             ui.tags.div(
                 (
                     ui.input_slider(
@@ -1008,19 +1140,21 @@ def predicciones_server(input, output, session):
                     if m >= 1
                     else ui.tags.div(
                         ui.tags.b("Valores a predecir: "),
-                        ui.tags.span("— (selecciona exógenas compatibles para habilitar el horizonte)"),
+                        ui.tags.span(
+                            "— (selecciona exógenas compatibles para habilitar el horizonte)"
+                        ),
                         style="margin-top: 8px; color:#6b7280; text-align:center;",
                     )
                 ),
                 style="margin-top:10px;",
             ),
-
             # BOTÓN debajo del slider, centrado
             ui.tags.div(
-                ui.input_action_button("calc_pred", "Calcula predicción", class_="btn-primary"),
+                ui.input_action_button(
+                    "calc_pred", "Calcula predicción", class_="btn-primary"
+                ),
                 style="margin-top: 10px; display:flex; justify-content:center;",
             ),
-
             style="padding: 14px; border-radius: 14px;",
         )
 
@@ -1036,7 +1170,10 @@ def predicciones_server(input, output, session):
                 header,
                 ui.tags.div(
                     ui.tags.span("Estado: ", style="font-weight:600;"),
-                    ui.tags.span("listo para calcular. Pulsa «Calcula predicción».", style="color:#6b7280;"),
+                    ui.tags.span(
+                        "listo para calcular. Pulsa «Calcula predicción».",
+                        style="color:#6b7280;",
+                    ),
                     style=(
                         "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
                         "border-radius: 12px; background:#fafafa;"
@@ -1047,7 +1184,6 @@ def predicciones_server(input, output, session):
 
         # Resultados
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
-
 
         kpis = ui.tags.div(
             _kpi_card("MAPE", f"{mape:.2f}%"),
@@ -1063,8 +1199,14 @@ def predicciones_server(input, output, session):
         )
 
         exogs_line = ui.tags.div(
-            ui.tags.span("Exógenas activas: ", style="font-weight:600; margin-right:6px;"),
-            _pill(", ".join(res["predictors_used"]) if res["predictors_used"] else "Ninguna"),
+            ui.tags.span(
+                "Exógenas activas: ", style="font-weight:600; margin-right:6px;"
+            ),
+            _pill(
+                ", ".join(res["predictors_used"])
+                if res["predictors_used"]
+                else "Ninguna"
+            ),
             style="margin-top: 10px;",
         )
 
@@ -1091,11 +1233,10 @@ def predicciones_server(input, output, session):
             ),
             style=(
                 "display:flex; gap:12px; flex-wrap:wrap;"
-                "align-items:flex-start;"          # <- evita que la tabla se estire en alto
+                "align-items:flex-start;"  # <- evita que la tabla se estire en alto
                 "margin-top: 12px;"
             ),
         )
-
 
         return ui.div(
             PANEL_STYLES,
