@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 from back.config import settings
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
-from front.utils.utils import _find_col, _safe_alias, add_fourier_annual_terms, create_dataframe_based_on_selection
+from front.utils.utils import (
+    _find_col,
+    _safe_alias,
+    add_fourier_annual_terms,
+    create_dataframe_based_on_selection,
+)
 
 
 SARIMAX_CFG = settings.get("models.sarimax", {})
@@ -28,6 +33,12 @@ class FilterSelection(BaseModel):
     table: str
     col: str
     values: list[str]
+    kind: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    year_col: Optional[str] = None
+    month_col: Optional[str] = None
+    day_col: Optional[str] = None
 
 
 class ScenarioOverride(BaseModel):
@@ -54,7 +65,9 @@ class SarimaxRunRequest(BaseModel):
     predictors: list[str] = Field(default_factory=list)
     filters_by_var: Optional[dict[str, list[FilterSelection]]] = None
 
-    train_ratio: float = Field(float(COMMON_CFG.get("train_ratio", 0.70)), gt=0.0, lt=1.0)
+    train_ratio: float = Field(
+        float(COMMON_CFG.get("train_ratio", 0.70)), gt=0.0, lt=1.0
+    )
 
     auto_params: bool = bool(SARIMAX_CFG.get("auto_params", True))
     s: int = int(SARIMAX_CFG.get("seasonal_period_s", 12))
@@ -94,16 +107,30 @@ def _raise_422(detail: str) -> None:
     raise HTTPException(status_code=422, detail=detail)
 
 
-def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Optional[str], Optional[str]]:
+def _build_time_index(
+    df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Optional[str], Optional[str], Optional[str]]:
     dia_col = _find_col(df, "dia", _safe_alias("dia"))
     mes_col = _find_col(df, "mes", _safe_alias("mes"))
-    ano_col = _find_col(df, "anio", "año", "ano", _safe_alias("anio"), _safe_alias("año"), _safe_alias("ano"))
+    ano_col = _find_col(
+        df,
+        "anio",
+        "año",
+        "ano",
+        _safe_alias("anio"),
+        _safe_alias("año"),
+        _safe_alias("ano"),
+    )
 
     out = df.copy()
     if ano_col and mes_col and ano_col in out.columns and mes_col in out.columns:
         day = out[dia_col] if dia_col and dia_col in out.columns else 1
         out["__dt"] = pd.to_datetime(
-            dict(year=pd.to_numeric(out[ano_col], errors="coerce"), month=pd.to_numeric(out[mes_col], errors="coerce"), day=pd.to_numeric(day, errors="coerce")),
+            dict(
+                year=pd.to_numeric(out[ano_col], errors="coerce"),
+                month=pd.to_numeric(out[mes_col], errors="coerce"),
+                day=pd.to_numeric(day, errors="coerce"),
+            ),
             errors="coerce",
         )
     elif isinstance(out.index, pd.DatetimeIndex):
@@ -113,7 +140,11 @@ def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Op
     else:
         _raise_422("No fue posible construir un time_index robusto")
 
-    out = out.dropna(subset=["__dt"]).sort_values("__dt", kind="mergesort").reset_index(drop=True)
+    out = (
+        out.dropna(subset=["__dt"])
+        .sort_values("__dt", kind="mergesort")
+        .reset_index(drop=True)
+    )
     return out, dia_col, mes_col, ano_col
 
 
@@ -121,7 +152,10 @@ def _get_dataframe(req) -> pd.DataFrame:
     df = create_dataframe_based_on_selection(
         target_var=req.target_var,
         predictors=req.predictors,
-        filters_by_var={k: [f.model_dump() for f in v] for k, v in (req.filters_by_var or {}).items()},
+        filters_by_var={
+            k: [f.model_dump() for f in v]
+            for k, v in (req.filters_by_var or {}).items()
+        },
     )
     if df is None or df.empty:
         _raise_422("El dataframe resultante está vacío")
@@ -130,18 +164,32 @@ def _get_dataframe(req) -> pd.DataFrame:
 
 def _prepare_exog_cols(req) -> List[str]:
     exog_cols = [_safe_alias(c) for c in (req.predictors or [])]
-    calendar_like = {_safe_alias("dia"), _safe_alias("mes"), _safe_alias("anio"), _safe_alias("año"), _safe_alias("ano")}
+    calendar_like = {
+        _safe_alias("dia"),
+        _safe_alias("mes"),
+        _safe_alias("anio"),
+        _safe_alias("año"),
+        _safe_alias("ano"),
+    }
     return [c for c in exog_cols if c not in calendar_like]
 
 
-def _maybe_add_fourier(df: pd.DataFrame, req, dia_col: Optional[str], exog_cols: List[str]) -> Tuple[pd.DataFrame, List[str], bool]:
-    use_fourier = bool(FOURIER_CFG.get("enabled_when_daily", True)) and dia_col is not None
+def _maybe_add_fourier(
+    df: pd.DataFrame, req, dia_col: Optional[str], exog_cols: List[str]
+) -> Tuple[pd.DataFrame, List[str], bool]:
+    use_fourier = (
+        bool(FOURIER_CFG.get("enabled_when_daily", True)) and dia_col is not None
+    )
     if not use_fourier:
         return df, exog_cols, False
 
-    k_value = int(getattr(req, "fourier_k", FOURIER_CFG.get("k", 6)) or FOURIER_CFG.get("k", 6))
+    k_value = int(
+        getattr(req, "fourier_k", FOURIER_CFG.get("k", 6)) or FOURIER_CFG.get("k", 6)
+    )
     m_value = int(FOURIER_CFG.get("m", 365))
-    df, fourier_cols = add_fourier_annual_terms(df, dia_col=dia_col, K=k_value, m=m_value)
+    df, fourier_cols = add_fourier_annual_terms(
+        df, dia_col=dia_col, K=k_value, m=m_value
+    )
     fourier_cols_safe = [_safe_alias(c) for c in fourier_cols]
     df = df.rename(columns=dict(zip(fourier_cols, fourier_cols_safe)))
     return df, (exog_cols + fourier_cols_safe), True
@@ -156,22 +204,32 @@ def _force_numeric(df: pd.DataFrame, y_col: str, exog_cols: List[str]) -> pd.Dat
     return df.replace([np.inf, -np.inf], np.nan)
 
 
-def _infer_future_index(df_hist: pd.DataFrame, horizon: int, monthly_hint: bool) -> pd.DatetimeIndex:
+def _infer_future_index(
+    df_hist: pd.DataFrame, horizon: int, monthly_hint: bool
+) -> pd.DatetimeIndex:
     last_dt = pd.to_datetime(df_hist["__dt"]).max()
     if pd.isna(last_dt):
         _raise_422("No se pudo inferir fecha final histórica")
     if monthly_hint:
         start = (last_dt + pd.offsets.MonthBegin(1)).normalize()
         return pd.date_range(start=start, periods=horizon, freq="MS")
-    return pd.date_range(start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D")
+    return pd.date_range(
+        start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D"
+    )
 
 
-def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], dt_col: str, exog_cols: list[str]) -> pd.DataFrame:
+def _apply_overrides(
+    df: pd.DataFrame,
+    overrides: list[ScenarioOverride],
+    dt_col: str,
+    exog_cols: list[str],
+) -> pd.DataFrame:
     out = df.copy()
     for ov in overrides:
         var = _safe_alias(ov.var)
         if var not in exog_cols or var not in out.columns:
             continue
+        out[var] = pd.to_numeric(out[var], errors="coerce").astype(float)
         mask = pd.Series(True, index=out.index)
         if ov.start:
             mask &= pd.to_datetime(out[dt_col]) >= pd.to_datetime(ov.start)
@@ -180,11 +238,17 @@ def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], dt_col
         if ov.op == "set":
             out.loc[mask, var] = float(ov.value)
         elif ov.op == "add":
-            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") + float(ov.value)
+            out.loc[mask, var] = pd.to_numeric(
+                out.loc[mask, var], errors="coerce"
+            ) + float(ov.value)
         elif ov.op == "mul":
-            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * float(ov.value)
+            out.loc[mask, var] = pd.to_numeric(
+                out.loc[mask, var], errors="coerce"
+            ) * float(ov.value)
         elif ov.op == "pct":
-            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * (1.0 + (float(ov.value) / 100.0))
+            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * (
+                1.0 + (float(ov.value) / 100.0)
+            )
     return out
 
 
@@ -195,18 +259,57 @@ def _validate_missing_future(df_future: pd.DataFrame, exog_cols: list[str]) -> N
             continue
         miss_rows = df_future[df_future[var].isna()]["__dt"]
         for dt in miss_rows:
-            missing.append({"var": var, "date": pd.to_datetime(dt).strftime("%Y-%m-%d")})
+            missing.append(
+                {"var": var, "date": pd.to_datetime(dt).strftime("%Y-%m-%d")}
+            )
     if missing:
-        raise HTTPException(status_code=400, detail={"detail": "Missing future exogenous values", "missing": missing})
+        raise HTTPException(
+            status_code=400,
+            detail={"detail": "Missing future exogenous values", "missing": missing},
+        )
 
 
-def _select_params(req, df_hist: pd.DataFrame, exog_cols: List[str], y_col: str, n_test: int, use_fourier: bool):
+def _select_params(
+    req,
+    df_hist: pd.DataFrame,
+    exog_cols: List[str],
+    y_col: str,
+    n_test: int,
+    use_fourier: bool,
+):
     if req.auto_params:
         if use_fourier:
-            order, seas = best_sarimax_params(df=df_hist, exog_cols=exog_cols, column_y=y_col, s=1, periodos_a_predecir=n_test, seasonal=False)
+            order, seas = best_sarimax_params(
+                df=df_hist,
+                exog_cols=exog_cols,
+                column_y=y_col,
+                s=1,
+                periodos_a_predecir=n_test,
+                seasonal=False,
+            )
             seas = (0, 0, 0, 0)
         else:
-            order, seas = best_sarimax_params(df=df_hist, exog_cols=exog_cols, column_y=y_col, s=req.s, periodos_a_predecir=n_test, seasonal=True)
+            # Con series cortas (p.ej. 12 meses) el auto_arima estacional puede fallar
+            # al aplicar diferenciación estacional. En ese caso hacemos fallback no estacional.
+            try:
+                order, seas = best_sarimax_params(
+                    df=df_hist,
+                    exog_cols=exog_cols,
+                    column_y=y_col,
+                    s=req.s,
+                    periodos_a_predecir=n_test,
+                    seasonal=True,
+                )
+            except Exception:
+                order, _ = best_sarimax_params(
+                    df=df_hist,
+                    exog_cols=exog_cols,
+                    column_y=y_col,
+                    s=1,
+                    periodos_a_predecir=n_test,
+                    seasonal=False,
+                )
+                seas = (0, 0, 0, 0)
         return order, seas
 
     default_order = tuple(SARIMAX_CFG.get("default_order", [0, 1, 0]))
@@ -227,6 +330,13 @@ def sarimax_run(req: SarimaxRunRequest):
         df, exog_cols, use_fourier = _maybe_add_fourier(df, req, dia_col, exog_cols)
         df = _force_numeric(df, y_col, exog_cols)
 
+        missing_exog_cols = [c for c in exog_cols if c not in df.columns]
+        if missing_exog_cols:
+            _raise_422(
+                "No hay datos para las predictoras seleccionadas con el rango/filtros actuales: "
+                + ", ".join(missing_exog_cols)
+            )
+
         mask_hist = df[y_col].notna()
         df_hist = df.loc[mask_hist].copy()
         if len(df_hist) < int(COMMON_CFG.get("min_historical_rows", 3)):
@@ -239,26 +349,48 @@ def sarimax_run(req: SarimaxRunRequest):
             we = pd.to_datetime(req.scenario_window.end)
             if ws > we:
                 _raise_422("scenario_window.start debe ser <= scenario_window.end")
-            hist_min, hist_max = pd.to_datetime(df_hist["__dt"]).min(), pd.to_datetime(df_hist["__dt"]).max()
+            hist_min, hist_max = (
+                pd.to_datetime(df_hist["__dt"]).min(),
+                pd.to_datetime(df_hist["__dt"]).max(),
+            )
             if ws < hist_min or we > hist_max:
-                _raise_422("scenario_window debe estar dentro del rango histórico observado")
+                _raise_422(
+                    "scenario_window debe estar dentro del rango histórico observado"
+                )
 
             train = df_hist[pd.to_datetime(df_hist["__dt"]) < ws].copy()
-            test = df_hist[(pd.to_datetime(df_hist["__dt"]) >= ws) & (pd.to_datetime(df_hist["__dt"]) <= we)].copy()
+            test = df_hist[
+                (pd.to_datetime(df_hist["__dt"]) >= ws)
+                & (pd.to_datetime(df_hist["__dt"]) <= we)
+            ].copy()
             if train.empty or test.empty:
-                _raise_422("No hay datos suficientes para entrenar/probar en la ventana indicada")
+                _raise_422(
+                    "No hay datos suficientes para entrenar/probar en la ventana indicada"
+                )
             if exog_cols:
                 train.loc[:, exog_cols] = train[exog_cols].fillna(0.0)
                 test = _apply_overrides(test, req.scenario_overrides, "__dt", exog_cols)
                 if test[exog_cols].isna().any().any():
                     _raise_422("Hay NaNs en exógenas de la ventana de escenario")
 
-            order, seas = _select_params(req, train, exog_cols, y_col, len(test), use_fourier)
-            model_fit = create_sarimax_model(train=train, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
+            order, seas = _select_params(
+                req, train, exog_cols, y_col, len(test), use_fourier
+            )
+            model_fit = create_sarimax_model(
+                train=train,
+                exog_cols=exog_cols,
+                column_y=y_col,
+                order=order,
+                seasonal_order=seas,
+            )
             exog_test = test[exog_cols].astype(float) if exog_cols else None
-            y_forecast = model_fit.predict(start=len(train), end=len(train) + len(test) - 1, exog=exog_test)
+            y_forecast = model_fit.predict(
+                start=len(train), end=len(train) + len(test) - 1, exog=exog_test
+            )
             y_true = test[y_col].astype(float).tolist()
-            mape, rmse, mae = compute_metrics(pred=y_forecast, df_test=test, indicador=y_col)
+            mape, rmse, mae = compute_metrics(
+                pred=y_forecast, df_test=test, indicador=y_col
+            )
             return SarimaxRunResponse(
                 y_col=y_col,
                 exog_cols=exog_cols,
@@ -275,11 +407,18 @@ def sarimax_run(req: SarimaxRunRequest):
                 horizon=len(test),
                 n_obs=len(df_hist),
                 y_true=y_true,
-                window={"start": ws.strftime("%Y-%m-%d"), "end": we.strftime("%Y-%m-%d")},
+                window={
+                    "start": ws.strftime("%Y-%m-%d"),
+                    "end": we.strftime("%Y-%m-%d"),
+                },
                 df=df.to_dict(orient="records") if req.return_df else None,
             )
 
-        horizon = int(getattr(req, "horizon", COMMON_CFG.get("horizon", 1)) or COMMON_CFG.get("horizon", 1))
+        horizon_raw = getattr(req, "horizon", None)
+        if horizon_raw is None:
+            horizon = int(COMMON_CFG.get("horizon", 1))
+        else:
+            horizon = int(horizon_raw)
         if horizon < 1:
             _raise_422("horizon debe ser >= 1")
 
@@ -289,17 +428,36 @@ def sarimax_run(req: SarimaxRunRequest):
 
         existing_future = df.loc[~mask_hist].copy()
         if not existing_future.empty:
-            existing_future = existing_future.drop_duplicates(subset=["__dt"], keep="last")
-            df_future = df_future.merge(existing_future[["__dt", *[c for c in exog_cols if c in existing_future.columns]]], on="__dt", how="left")
+            existing_future = existing_future.drop_duplicates(
+                subset=["__dt"], keep="last"
+            )
+            df_future = df_future.merge(
+                existing_future[
+                    ["__dt", *[c for c in exog_cols if c in existing_future.columns]]
+                ],
+                on="__dt",
+                how="left",
+            )
+
+        for c in exog_cols:
+            if c not in df_future.columns:
+                df_future[c] = np.nan
 
         for fv in req.scenario_future_values:
             var = _safe_alias(fv.var)
             if var in exog_cols:
                 date = pd.to_datetime(fv.date)
-                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(fv.value)
+                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(
+                    fv.value
+                )
 
         if exog_cols:
-            df_future = _apply_overrides(df_future, req.scenario_overrides if req.scenario_mode == "future" else [], "__dt", exog_cols)
+            df_future = _apply_overrides(
+                df_future,
+                req.scenario_overrides if req.scenario_mode == "future" else [],
+                "__dt",
+                exog_cols,
+            )
             _validate_missing_future(df_future, exog_cols)
             exog_future = df_future[exog_cols].astype(float)
             df_hist.loc[:, exog_cols] = df_hist[exog_cols].fillna(0.0)
@@ -309,18 +467,38 @@ def sarimax_run(req: SarimaxRunRequest):
         n_train = int(len(df_hist) * req.train_ratio)
         n_test = len(df_hist) - n_train
         if n_train <= 0 or n_test <= 0:
-            _raise_422(f"Split inválido (histórico): n={len(df_hist)}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio.")
+            _raise_422(
+                f"Split inválido (histórico): n={len(df_hist)}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio."
+            )
         train = df_hist.iloc[:n_train]
-        test = df_hist.iloc[n_train:n_train + n_test]
+        test = df_hist.iloc[n_train : n_train + n_test]
         exog_test = test[exog_cols].astype(float) if exog_cols else None
 
-        order, seas = _select_params(req, df_hist, exog_cols, y_col, n_test, use_fourier)
-        model_fit = create_sarimax_model(train=train, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
-        pred_test = model_fit.predict(start=len(train), end=len(train) + len(test) - 1, exog=exog_test)
+        order, seas = _select_params(
+            req, df_hist, exog_cols, y_col, n_test, use_fourier
+        )
+        model_fit = create_sarimax_model(
+            train=train,
+            exog_cols=exog_cols,
+            column_y=y_col,
+            order=order,
+            seasonal_order=seas,
+        )
+        pred_test = model_fit.predict(
+            start=len(train), end=len(train) + len(test) - 1, exog=exog_test
+        )
         mape, rmse, mae = compute_metrics(pred=pred_test, df_test=test, indicador=y_col)
 
-        model_fit_full = create_sarimax_model(train=df_hist, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
-        y_forecast = model_fit_full.predict(start=len(df_hist), end=len(df_hist) + horizon - 1, exog=exog_future)
+        model_fit_full = create_sarimax_model(
+            train=df_hist,
+            exog_cols=exog_cols,
+            column_y=y_col,
+            order=order,
+            seasonal_order=seas,
+        )
+        y_forecast = model_fit_full.predict(
+            start=len(df_hist), end=len(df_hist) + horizon - 1, exog=exog_future
+        )
 
         return SarimaxRunResponse(
             y_col=y_col,
@@ -343,4 +521,10 @@ def sarimax_run(req: SarimaxRunRequest):
     except HTTPException:
         raise
     except Exception as e:
+        msg = str(e)
+        if "no more samples after a first-order seasonal differencing" in msg.lower():
+            _raise_422(
+                "Serie demasiado corta para SARIMAX estacional con el rango/filtros actuales. "
+                "Prueba con más histórico, menor train_ratio o modelo XGBoost."
+            )
         raise HTTPException(status_code=500, detail=f"Error SARIMAX run: {e}")
