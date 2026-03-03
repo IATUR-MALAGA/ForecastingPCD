@@ -3,11 +3,10 @@ from datetime import date, datetime
 import re
 import hashlib
 from collections import OrderedDict
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 from shiny import ui
-from click import Tuple
 import pandas as pd
 from psycopg import sql
 
@@ -23,6 +22,7 @@ from front.utils.back_api_wrappers import (
 
 DateLike = Union[date, datetime, str]
 
+
 def slug(text: str) -> str:
     text = (text or "").strip().lower()
     text = re.sub(r"\s+", "_", text)
@@ -30,13 +30,15 @@ def slug(text: str) -> str:
     text = re.sub(r"_+", "_", text).strip("_")
     return text or "x"
 
+
 def stable_id(prefix: str, text: str) -> str:
     h = hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:10]
     return f"{prefix}__{h}"
 
+
 def group_by_category(catalog_entries, exclude_name: str | None = None) -> OrderedDict:
     grouped: OrderedDict[str, list[str]] = OrderedDict()
-    for entry in (catalog_entries or []):
+    for entry in catalog_entries or []:
         if not entry:
             continue
         name = entry.get("nombre")
@@ -49,6 +51,7 @@ def group_by_category(catalog_entries, exclude_name: str | None = None) -> Order
     for cat in sorted(grouped.keys()):
         grouped_sorted[cat] = sorted(grouped[cat])
     return grouped_sorted
+
 
 def fmt(v) -> str:
     if v is None:
@@ -67,27 +70,26 @@ def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
     """
     if not date_value:
         return "—"
-    
-    
+
     if isinstance(date_value, str):
         try:
             date_value = datetime.fromisoformat(date_value[:10]).date()
         except:
             return str(date_value)
-    
+
     if not temporality:
-        return date_value.strftime('%d/%m/%Y')
-    
+        return date_value.strftime("%d/%m/%Y")
+
     temp_lower = temporality.strip().lower()
-    
-    if temp_lower in ('mensual', 'mes', 'monthly', 'month'):
-        return date_value.strftime('%m/%Y')
-    elif temp_lower in ('diaria', 'dia', 'día', 'daily', 'day'):
-        return date_value.strftime('%d/%m/%Y')
-    elif temp_lower in ('anual', 'año', 'ano', 'year', 'yearly', 'annual'):
-        return date_value.strftime('%Y')
+
+    if temp_lower in ("mensual", "mes", "monthly", "month"):
+        return date_value.strftime("%m/%Y")
+    elif temp_lower in ("diaria", "dia", "día", "daily", "day"):
+        return date_value.strftime("%d/%m/%Y")
+    elif temp_lower in ("anual", "año", "ano", "year", "yearly", "annual"):
+        return date_value.strftime("%Y")
     else:
-        return date_value.strftime('%d/%m/%Y')
+        return date_value.strftime("%d/%m/%Y")
 
 
 def check_date_and_temporality(
@@ -110,6 +112,7 @@ def check_date_and_temporality(
         return False
 
     return (s2 >= s1) and (e2 <= e1)
+
 
 def diff_en_temporalidad(
     from_date: DateLike,
@@ -158,6 +161,7 @@ def diff_en_temporalidad(
 
     return None
 
+
 def _to_date(d: DateLike) -> date:
     if isinstance(d, datetime):
         return d.date()
@@ -170,7 +174,7 @@ def _to_date(d: DateLike) -> date:
 
 def build_name_to_table(catalog_entries) -> dict[str, str]:
     name_to_table: dict[str, str] = {}
-    for entry in (catalog_entries or []):
+    for entry in catalog_entries or []:
         if not entry:
             continue
         name = entry.get("nombre")
@@ -292,13 +296,16 @@ def compatibilidad_con_objetivo(
     if pred_temp is None or tgt_temp is None:
         return False, "Temporalidad no definida"
 
-    if pred_start is None or pred_end is None or target_start is None or target_end is None:
+    if (
+        pred_start is None
+        or pred_end is None
+        or target_start is None
+        or target_end is None
+    ):
         return False, "Sin rango de fechas"
 
     ok = check_date_and_temporality(
-        pred_start, target_start,
-        pred_end, target_end,
-        pred_temp, tgt_temp
+        pred_start, target_start, pred_end, target_end, pred_temp, tgt_temp
     )
 
     if ok:
@@ -309,66 +316,80 @@ def compatibilidad_con_objetivo(
 
 
 def detect_temporal_filters(filtros: list[dict]) -> dict:
-    
-    anio_filter = next((f for f in filtros if f["col"].lower().strip() in ("anio", "año", "ano")), None)
+    anio_filter = next(
+        (f for f in filtros if f["col"].lower().strip() in ("anio", "año", "ano")), None
+    )
     mes_filter = next((f for f in filtros if f["col"].lower().strip() == "mes"), None)
-    dia_filter = next((f for f in filtros if f["col"].lower().strip() in ("dia", "día")), None)
-    
+    dia_filter = next(
+        (f for f in filtros if f["col"].lower().strip() in ("dia", "día")), None
+    )
+
     table = None
     if anio_filter or mes_filter or dia_filter:
         table = (anio_filter or mes_filter or dia_filter)["table"]
-    
+
     return {
         "anio": anio_filter,
         "mes": mes_filter,
         "dia": dia_filter,
         "table": table,
-        "has_any": bool(anio_filter or mes_filter or dia_filter)
+        "has_any": bool(anio_filter or mes_filter or dia_filter),
     }
 
 
-def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_date=None, end_date=None, current_input=None):
+def create_calendar_filter(
+    filtros: list[dict],
+    cache,
+    stable_id_func,
+    start_date=None,
+    end_date=None,
+    current_input=None,
+):
     temp = detect_temporal_filters(filtros)
-    
+
     if not temp["has_any"]:
         return None
-    
+
     anio_filter = temp["anio"]
     mes_filter = temp["mes"]
     dia_filter = temp["dia"]
     table = temp["table"]
-    
-    
+
     if start_date and isinstance(start_date, str):
         start_date = datetime.fromisoformat(start_date[:10]).date()
     if end_date and isinstance(end_date, str):
         end_date = datetime.fromisoformat(end_date[:10]).date()
-    
+
     if anio_filter and not mes_filter and not dia_filter:
         input_id = stable_id_func("flt", f"{table}__anio")
         anios = cache.get_distinct("IA", table, anio_filter["col"])
         anios_sorted = sorted([str(a) for a in anios if a], reverse=True)
-        
+
         return ui.tags.div(
             ui.tags.label("Filtros de Temporalidad", class_="calendar-filter-title"),
             ui.input_selectize(
-                input_id, "Año", choices=anios_sorted, multiple=True,
-                options={"placeholder": "Selecciona año(s)", "plugins": ["remove_button"]}
+                input_id,
+                "Año",
+                choices=anios_sorted,
+                multiple=True,
+                options={
+                    "placeholder": "Selecciona año(s)",
+                    "plugins": ["remove_button"],
+                },
             ),
-            class_="calendar-filter-container"
+            class_="calendar-filter-container",
         )
-    
+
     #
     if anio_filter and mes_filter and not dia_filter:
         from datetime import date
+
         date_input_id = stable_id_func("flt", f"{table}__date_range")
         container_id = f"container_{date_input_id}"
-        
-        
+
         min_date = start_date if start_date else date(2000, 1, 1)
         max_date = end_date if end_date else date.today()
-        
-        
+
         if current_input and date_input_id in current_input:
             current_val = current_input[date_input_id]()
             if current_val and len(current_val) == 2:
@@ -380,9 +401,11 @@ def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_dat
         else:
             start_val = min_date
             end_val = max_date
-        
+
         return ui.tags.div(
-            ui.tags.label("Filtros de Temporalidad (Mes/Año)", class_="calendar-filter-title"),
+            ui.tags.label(
+                "Filtros de Temporalidad (Mes/Año)", class_="calendar-filter-title"
+            ),
             ui.input_date_range(
                 date_input_id,
                 "Seleccionar Período",
@@ -393,7 +416,7 @@ def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_dat
                 format="mm/yyyy",
                 language="es",
                 separator="a",
-                startview="year"
+                startview="year",
             ),
             ui.tags.script(f"""
                 (function() {{
@@ -445,21 +468,20 @@ def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_dat
             """),
             ui.tags.small(
                 f"Haz clic en el mes deseado. El día es orientativo, se usará el mes para el entrenamiento. Rango disponible: {min_date.strftime('%m/%Y')} a {max_date.strftime('%m/%Y')}.",
-                style="display: block; color: #57606a; font-size: 0.85em; margin-top: 4px; font-style: italic;"
+                style="display: block; color: #57606a; font-size: 0.85em; margin-top: 4px; font-style: italic;",
             ),
             id=container_id,
-            class_="calendar-filter-container"
+            class_="calendar-filter-container",
         )
-    
-    
+
     if dia_filter:
         from datetime import date
+
         date_input_id = stable_id_func("flt", f"{table}__date_range")
-        
+
         min_date = start_date if start_date else date(2000, 1, 1)
         max_date = end_date if end_date else date.today()
-        
-        
+
         if current_input and date_input_id in current_input:
             current_val = current_input[date_input_id]()
             if current_val and len(current_val) == 2:
@@ -471,7 +493,7 @@ def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_dat
         else:
             start_val = min_date
             end_val = max_date
-        
+
         return ui.tags.div(
             ui.tags.label("Filtros de Temporalidad", class_="calendar-filter-title"),
             ui.input_date_range(
@@ -483,71 +505,49 @@ def create_calendar_filter(filtros: list[dict], cache, stable_id_func, start_dat
                 max=max_date,
                 format="dd/mm/yyyy",
                 language="es",
-                separator="a"
+                separator="a",
             ),
-            class_="calendar-filter-container"
+            class_="calendar-filter-container",
         )
-    
+
     return None
 
 
 def process_date_range_filters(date_range, filtros, table):
-  
     if not date_range or len(date_range) != 2:
         return []
-    
-    from datetime import timedelta
+
     start_date, end_date = date_range
-    selected_list = []
-    
-    
+    start_dt = pd.to_datetime(start_date, errors="coerce")
+    end_dt = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start_dt) or pd.isna(end_dt):
+        return []
+
     temp = detect_temporal_filters(filtros)
-    
-    
-    if temp["anio"]:
-        anio_col = temp["anio"]["col"]
-        years = list(range(start_date.year, end_date.year + 1))
-        selected_list.append({
+
+    if not temp["anio"]:
+        return []
+
+    if temp["mes"] and not temp["dia"]:
+        start_dt = start_dt.to_period("M").to_timestamp(how="start")
+        end_dt = end_dt.to_period("M").to_timestamp(how="end")
+    elif not temp["mes"] and not temp["dia"]:
+        start_dt = pd.Timestamp(year=start_dt.year, month=1, day=1)
+        end_dt = pd.Timestamp(year=end_dt.year, month=12, day=31)
+
+    return [
+        {
             "table": table,
-            "col": anio_col,
-            "values": [str(y) for y in years]
-        })
-    
-    
-    if temp["mes"]:
-        mes_col = temp["mes"]["col"]
-        months = set()
-        current = start_date
-        while current <= end_date:
-            months.add(current.month)
-            
-            if current.month == 12:
-                from datetime import date
-                current = date(current.year + 1, 1, 1)
-            else:
-                from datetime import date
-                current = date(current.year, current.month + 1, 1)
-        selected_list.append({
-            "table": table,
-            "col": mes_col,
-            "values": [str(m) for m in sorted(months)]
-        })
-    
-    
-    if temp["dia"]:
-        dia_col = temp["dia"]["col"]
-        days = set()
-        current = start_date
-        while current <= end_date:
-            days.add(current.day)
-            current = current + timedelta(days=1)
-        selected_list.append({
-            "table": table,
-            "col": dia_col,
-            "values": [str(d) for d in sorted(days)]
-        })
-    
-    return selected_list
+            "kind": "date_range",
+            "col": "__date_range__",
+            "values": [],
+            "start": start_dt.date().isoformat(),
+            "end": end_dt.date().isoformat(),
+            "year_col": temp["anio"]["col"],
+            "month_col": temp["mes"]["col"] if temp["mes"] else None,
+            "day_col": temp["dia"]["col"] if temp["dia"] else None,
+        }
+    ]
 
 
 def panel_styles() -> ui.tags.style:
@@ -715,13 +715,17 @@ def panel_styles() -> ui.tags.style:
     )
 
 
-def get_col_ref_and_table(nombre: str, cache: PrediccionesCache | None = None) -> Tuple[str, str, str]:
+def get_col_ref_and_table(
+    nombre: str, cache: PrediccionesCache | None = None
+) -> Tuple[str, str, str]:
     if cache:
         rows = [cache.get_meta(nombre)]
     else:
         rows = get_metadata_for_variable(nombre)
     if not rows:
-        raise ValueError(f"No existe metadata para la variable '{nombre}' en tbl_catalogo_variables")
+        raise ValueError(
+            f"No existe metadata para la variable '{nombre}' en tbl_catalogo_variables"
+        )
 
     row = rows[0]
     col_ref = row.get("nombre_colum_ref")
@@ -781,11 +785,45 @@ def create_where_clauses(
         if target_table and f_table and f_table != target_table:
             continue
 
+        if f.get("kind") == "date_range" or column == "__date_range__":
+            start = f.get("start")
+            end = f.get("end")
+            year_col = f.get("year_col")
+            month_col = f.get("month_col")
+            day_col = f.get("day_col")
+
+            if not (start and end and year_col):
+                raise ValueError(
+                    f"Filtro 'date_range' incompleto para '{var_name}': "
+                    f"se requieren start, end y year_col. Recibido: {f!r}"
+                )
+
+            if day_col and month_col:
+                date_expr = sql.SQL("make_date({y}::int, {m}::int, {d}::int)").format(
+                    y=sql.Identifier(year_col),
+                    m=sql.Identifier(month_col),
+                    d=sql.Identifier(day_col),
+                )
+            elif month_col:
+                date_expr = sql.SQL("make_date({y}::int, {m}::int, 1)").format(
+                    y=sql.Identifier(year_col),
+                    m=sql.Identifier(month_col),
+                )
+            else:
+                date_expr = sql.SQL("make_date({y}::int, 1, 1)").format(
+                    y=sql.Identifier(year_col),
+                )
+
+            clauses.append(
+                sql.SQL("{expr} BETWEEN %s::date AND %s::date").format(expr=date_expr)
+            )
+            params.extend([start, end])
+            continue
+
         if column and values:
             placeholders = sql.SQL(", ").join([sql.Placeholder()] * len(values))
             clause = sql.SQL("{col}::text IN ({vals})").format(
-                col=sql.Identifier(column),
-                vals=placeholders
+                col=sql.Identifier(column), vals=placeholders
             )
             clauses.append(clause)
             params.extend(values)
@@ -804,6 +842,7 @@ def create_where_clauses(
     group_cols = [c for c in group_cols if not (c in seen or seen.add(c))]
 
     return clauses, params, group_cols
+
 
 def create_dataframe_based_on_selection(
     target_var: str,
@@ -838,17 +877,25 @@ def create_dataframe_based_on_selection(
             if _table_has_col(table, c):
                 cols.append(c)
         if not cols:
-            raise ValueError(f'La tabla "IA".{table} no tiene columnas temporales (anio/mes/dia).')
+            raise ValueError(
+                f'La tabla "IA".{table} no tiene columnas temporales (anio/mes/dia).'
+            )
         return cols
 
-    def _dt_series_from_time_cols(df_: pd.DataFrame, time_cols_: list[str]) -> pd.Series:
+    def _dt_series_from_time_cols(
+        df_: pd.DataFrame, time_cols_: list[str]
+    ) -> pd.Series:
         # Convierte (anio, mes, dia) -> datetime (con defaults si faltan cols)
         year = df_["anio"].astype(int)
         month = df_["mes"].astype(int) if "mes" in time_cols_ else 1
         day = df_["dia"].astype(int) if "dia" in time_cols_ else 1
-        return pd.to_datetime({"year": year, "month": month, "day": day}, errors="coerce")
+        return pd.to_datetime(
+            {"year": year, "month": month, "day": day}, errors="coerce"
+        )
 
-    def _future_dates(target_end_dt: pd.Timestamp, pred_end_dt: pd.Timestamp, time_cols_: list[str]) -> pd.DatetimeIndex:
+    def _future_dates(
+        target_end_dt: pd.Timestamp, pred_end_dt: pd.Timestamp, time_cols_: list[str]
+    ) -> pd.DatetimeIndex:
         # Genera fechas desde (target_end + 1 paso) hasta pred_end (incluido)
         if pred_end_dt <= target_end_dt:
             return pd.DatetimeIndex([])
@@ -863,7 +910,9 @@ def create_dataframe_based_on_selection(
         start = target_end_dt + pd.offsets.YearBegin(1)
         return pd.date_range(start=start, end=pred_end_dt, freq="YS")
 
-    def _time_cols_df_from_dates(dates: pd.DatetimeIndex, time_cols_: list[str]) -> pd.DataFrame:
+    def _time_cols_df_from_dates(
+        dates: pd.DatetimeIndex, time_cols_: list[str]
+    ) -> pd.DataFrame:
         out = {}
         if "anio" in time_cols_:
             out["anio"] = dates.year.astype(int)
@@ -874,7 +923,9 @@ def create_dataframe_based_on_selection(
         return pd.DataFrame(out)
 
     # --- Target ---
-    target_col, target_table, target_name = get_col_ref_and_table(target_var, cache=cache)
+    target_col, target_table, target_name = get_col_ref_and_table(
+        target_var, cache=cache
+    )
     target_alias = _safe_alias(target_name or target_col)
 
     # granularidad temporal del target
@@ -883,16 +934,25 @@ def create_dataframe_based_on_selection(
     where_clauses_target, target_params, group_cols_target = create_where_clauses(
         filters_by_var, target_name, target_table=target_table
     )
-    where_sql_target = sql.SQL(" AND ").join(where_clauses_target) if where_clauses_target else sql.SQL("TRUE")
+    where_sql_target = (
+        sql.SQL(" AND ").join(where_clauses_target)
+        if where_clauses_target
+        else sql.SQL("TRUE")
+    )
 
     group_select = sql.SQL("")
     if group_cols_target:
-        group_select = sql.SQL(", ").join(sql.Identifier(c) for c in group_cols_target) + sql.SQL(", ")
+        group_select = sql.SQL(", ").join(
+            sql.Identifier(c) for c in group_cols_target
+        ) + sql.SQL(", ")
 
     time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
 
     group_by = sql.SQL(", ").join(
-        [*(sql.Identifier(c) for c in group_cols_target), *(sql.Identifier(c) for c in time_cols)]
+        [
+            *(sql.Identifier(c) for c in group_cols_target),
+            *(sql.Identifier(c) for c in time_cols),
+        ]
     )
 
     q_target = sql.SQL("""
@@ -907,7 +967,7 @@ def create_dataframe_based_on_selection(
         time_select=time_select,
         table=sql.Identifier(target_table),
         where=where_sql_target,
-        group_by=group_by
+        group_by=group_by,
     )
 
     target_cols = [*group_cols_target, target_alias, *time_cols]
@@ -921,7 +981,7 @@ def create_dataframe_based_on_selection(
         return df_target
 
     # --- Predictors (primero los leemos y guardamos; NO merge todavía) ---
-    pred_dfs: list[tuple[pd.DataFrame, list[str]]] = []   # (df_pred, join_keys)
+    pred_dfs: list[tuple[pd.DataFrame, list[str]]] = []  # (df_pred, join_keys)
     min_pred_end_dt: pd.Timestamp | None = None
 
     for i, p in enumerate(predictors or [], start=1):
@@ -939,18 +999,27 @@ def create_dataframe_based_on_selection(
         where_clauses_p, p_params, _group_cols_p = create_where_clauses(
             filters_by_var, p_name, target_table=p_table
         )
-        where_sql_p = sql.SQL(" AND ").join(where_clauses_p) if where_clauses_p else sql.SQL("TRUE")
+        where_sql_p = (
+            sql.SQL(" AND ").join(where_clauses_p)
+            if where_clauses_p
+            else sql.SQL("TRUE")
+        )
 
         # Si predictor está en la MISMA tabla que el target, desglosamos por los mismos grupos
         group_cols_pred = group_cols_target if (p_table == target_table) else []
         pred_group_select = sql.SQL("")
         if group_cols_pred:
-            pred_group_select = sql.SQL(", ").join(sql.Identifier(c) for c in group_cols_pred) + sql.SQL(", ")
+            pred_group_select = sql.SQL(", ").join(
+                sql.Identifier(c) for c in group_cols_pred
+            ) + sql.SQL(", ")
 
         pred_time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
 
         pred_group_by = sql.SQL(", ").join(
-            [*(sql.Identifier(c) for c in group_cols_pred), *(sql.Identifier(c) for c in time_cols)]
+            [
+                *(sql.Identifier(c) for c in group_cols_pred),
+                *(sql.Identifier(c) for c in time_cols),
+            ]
         )
 
         q_pred = sql.SQL("""
@@ -965,7 +1034,7 @@ def create_dataframe_based_on_selection(
             time_select=pred_time_select,
             table=sql.Identifier(p_table),
             where=where_sql_p,
-            group_by=pred_group_by
+            group_by=pred_group_by,
         )
 
         pred_cols = [*group_cols_pred, p_alias, *time_cols]
@@ -992,7 +1061,11 @@ def create_dataframe_based_on_selection(
     # target_end_dt (máximo temporal del target)
     target_end_dt = _dt_series_from_time_cols(df_target, time_cols).max()
 
-    if min_pred_end_dt is not None and pd.notna(target_end_dt) and min_pred_end_dt > target_end_dt:
+    if (
+        min_pred_end_dt is not None
+        and pd.notna(target_end_dt)
+        and min_pred_end_dt > target_end_dt
+    ):
         fut_dates = _future_dates(target_end_dt, min_pred_end_dt, time_cols)
         if len(fut_dates) > 0:
             df_time_future = _time_cols_df_from_dates(fut_dates, time_cols)
@@ -1002,7 +1075,9 @@ def create_dataframe_based_on_selection(
                 df_groups = df_target[group_cols_target].drop_duplicates().copy()
                 df_groups["_k"] = 1
                 df_time_future["_k"] = 1
-                df_future = df_groups.merge(df_time_future, on="_k", how="outer").drop(columns=["_k"])
+                df_future = df_groups.merge(df_time_future, on="_k", how="outer").drop(
+                    columns=["_k"]
+                )
             else:
                 df_future = df_time_future
 
@@ -1024,16 +1099,16 @@ def create_dataframe_based_on_selection(
     return df_base
 
 
-
 def _find_col(df: pd.DataFrame, *candidates: str):
     for c in candidates:
         if c and c in df.columns:
             return c
     return None
 
+
 def add_fourier_annual_terms(
     df: pd.DataFrame,
-    dia_col: str = "dia",      # día del mes (1..31)
+    dia_col: str = "dia",  # día del mes (1..31)
     K: int = 6,
     m: int = 365,
     anio_col: str = "anio",
@@ -1054,11 +1129,15 @@ def add_fourier_annual_terms(
     df[dia_col] = pd.to_numeric(df[dia_col], errors="raise").astype(int)
     if not df[dia_col].between(1, 31).all():
         bad = df.loc[~df[dia_col].between(1, 31), dia_col].head(5).tolist()
-        raise ValueError(f"Valores inválidos en '{dia_col}' (deben ser 1..31). Ejemplos: {bad}")
+        raise ValueError(
+            f"Valores inválidos en '{dia_col}' (deben ser 1..31). Ejemplos: {bad}"
+        )
 
     # 2) Construye fecha diaria real
     if anio_col not in df.columns or mes_col not in df.columns:
-        raise ValueError(f"Faltan columnas '{anio_col}' y/o '{mes_col}' para construir '{fecha_col}'.")
+        raise ValueError(
+            f"Faltan columnas '{anio_col}' y/o '{mes_col}' para construir '{fecha_col}'."
+        )
 
     df[fecha_col] = pd.to_datetime(
         dict(
@@ -1085,7 +1164,6 @@ def add_fourier_annual_terms(
         cols.extend([ccol, scol])
 
     return df, cols
-
 
 
 ICON_SVG_INFO = """<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" viewBox="0 0 16 16">
