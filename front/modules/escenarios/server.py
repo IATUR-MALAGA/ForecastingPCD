@@ -791,8 +791,11 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 3: configurar filtros"),
-            ui.p(
-                "Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."
+            ui.tags.ul(
+                ui.tags.li("Para cada variable se muestran sus filtros configurados."),
+                ui.tags.li(
+                    "En exógenas, el rango temporal se ajusta automáticamente al rango elegido en la variable objetivo."
+                ),
             ),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
@@ -1171,9 +1174,6 @@ def escenarios_server(input, output, session):
                     "model": model,
                     "fig": fig,
                     "pred_df": pred_df,
-                    "mape": resp.get("mape"),
-                    "rmse": resp.get("rmse"),
-                    "mae": resp.get("mae"),
                 }
             )
             scenario_err_rv.set(None)
