@@ -4,11 +4,11 @@ from shiny import ui, module
 @module.ui
 def predicciones_ui():
     return ui.div(
-        # Step Indicator (rendered dynamically from server)
-        ui.output_ui("step_indicator"),
-        
         # Wizard Container
         ui.div(
+            # Step Indicator (rendered dynamically from server)
+            ui.output_ui("step_indicator"),
+
             # Step 1: Select Indicator
             ui.output_ui("step_panel_1"),
             

@@ -34,13 +34,14 @@ def create_sarimax_model(
     )
     results = model.fit()
     return results  # Devuelve el modelo entrenado con train
-
+0
 
 def predict_sarimax(model_fit, start, end, exog_cols):
     """
     Generate predictions using the fitted SARIMAX model
     on the test set.
     """
+    print(f"Predicting with SARIMAX from {start} to {end} with exog_cols: {exog_cols}")
     pred = model_fit.predict(start=start, end=end, exog=exog_cols)
     return pred
 
@@ -103,6 +104,8 @@ def best_sarimax_params(
             error_action=settings.get("models.sarimax.auto_search.error_action", "trace"),
             suppress_warnings=bool(settings.get("models.sarimax.auto_search.suppress_warnings", False)),
         )
+
+
     except Exception:
         traceback.print_exc()
         raise

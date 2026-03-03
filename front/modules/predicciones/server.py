@@ -50,6 +50,40 @@ def predicciones_server(input, output, session):
 
     @output
     @render.ui
+    def step_indicator():
+        step = current_step.get()
+        labels = ["Objetivo", "Predictoras", "Filtros", "Predicciones"]
+        nodes = []
+
+        for i, lbl in enumerate(labels, start=1):
+            classes = "step-item"
+            if i < step:
+                classes += " completed"
+            elif i == step:
+                classes += " active"
+
+            nodes.append(
+                ui.tags.div(
+                    ui.tags.div(
+                        ui.tags.span(str(i), class_="step-number"),
+                        class_="step-circle",
+                    ),
+                    ui.tags.span(lbl, class_="step-label"),
+                    class_=classes,
+                )
+            )
+
+            if i < len(labels):
+                nodes.append(ui.tags.div(class_="step-connector"))
+
+        return ui.div(
+            PANEL_STYLES,
+            ui.tags.div(*nodes, class_="step-indicator"),
+            style="margin:8px 0;",
+        )
+
+    @output
+    @render.ui
     def step_panel_1():
         if current_step.get() != 1:
             return ui.div()
