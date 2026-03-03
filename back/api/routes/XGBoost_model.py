@@ -122,7 +122,7 @@ def _recursive_predict(model, train: pd.DataFrame, test: pd.DataFrame, y_col: st
     return pd.Series(preds, index=test.index, name=y_col)
 
 
-def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Optional[str]]:
+def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Optional[str], Optional[str]]:
     dia_col = _find_col(df, "dia", _safe_alias("dia"))
     mes_col = _find_col(df, "mes", _safe_alias("mes"))
     ano_col = _find_col(df, "anio", "año", "ano", _safe_alias("anio"), _safe_alias("año"), _safe_alias("ano"))
@@ -139,7 +139,7 @@ def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Op
         _raise_422("No fue posible construir un time_index robusto")
 
     out = out.dropna(subset=["__dt"]).sort_values("__dt", kind="mergesort").reset_index(drop=True)
-    return out, dia_col, mes_col
+    return out, dia_col, mes_col, ano_col
 
 
 def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], predictors: list[str]) -> pd.DataFrame:
@@ -186,6 +186,13 @@ def _infer_future_index(df_hist: pd.DataFrame, horizon: int, monthly_hint: bool)
     return pd.date_range(start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D")
 
 
+def _normalize_future_dt(value: str, monthly_hint: bool) -> pd.Timestamp:
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        _raise_422(f"Fecha inválida en scenario_future_values: {value}")
+    return dt.to_period("M").to_timestamp(how="start") if monthly_hint else dt.normalize()
+
+
 def _validate_missing_future(df_future: pd.DataFrame, predictors: list[str]) -> None:
     missing = []
     for var in predictors:
@@ -212,7 +219,7 @@ def xgboost_run(req: XGBoostRunRequest):
         if y_col not in df.columns:
             _raise_422(f"No existe la columna objetivo '{y_col}' en el dataframe")
 
-        df, dia_col, mes_col = _build_time_index(df)
+        df, dia_col, mes_col, ano_col = _build_time_index(df)
         for c in [y_col] + predictors:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -288,6 +295,11 @@ def xgboost_run(req: XGBoostRunRequest):
 
         monthly_hint = mes_col is not None and dia_col is None
         future_index = _infer_future_index(df_hist, horizon, monthly_hint)
+        if req.scenario_mode == "future" and req.scenario_future_values:
+            provided_dates = sorted({_normalize_future_dt(fv.date, monthly_hint) for fv in req.scenario_future_values})
+            if len(provided_dates) != horizon:
+                _raise_422("En scenario_mode='future', scenario_future_values debe cubrir exactamente 'horizon' fechas únicas")
+            future_index = pd.DatetimeIndex(provided_dates)
         df_future = pd.DataFrame({"__dt": future_index})
         existing_future = df.loc[~mask_hist].copy()
         if not existing_future.empty:
@@ -297,7 +309,8 @@ def xgboost_run(req: XGBoostRunRequest):
         for fv in req.scenario_future_values:
             var = _safe_alias(fv.var)
             if var in predictors:
-                df_future.loc[pd.to_datetime(df_future["__dt"]) == pd.to_datetime(fv.date), var] = float(fv.value)
+                date = _normalize_future_dt(fv.date, monthly_hint)
+                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(fv.value)
         if predictors:
             df_future = _apply_overrides(df_future, req.scenario_overrides if req.scenario_mode == "future" else [], predictors)
             _validate_missing_future(df_future, predictors)
@@ -339,11 +352,23 @@ def xgboost_run(req: XGBoostRunRequest):
         else:
             y_forecast_list = [float(x) for x in model_fit_full.predict(df_future[feature_cols])]
 
+        # Populate calendar columns in df_future from __dt
+        fut_dt = pd.to_datetime(df_future["__dt"])
+        if ano_col and ano_col in df_hist.columns:
+            df_future[ano_col] = fut_dt.dt.year
+        if mes_col and mes_col in df_hist.columns:
+            df_future[mes_col] = fut_dt.dt.month
+        if dia_col and dia_col in df_hist.columns:
+            df_future[dia_col] = fut_dt.dt.day
+
+        # Build output df: historical rows + future rows (ensures n_obs + horizon rows)
+        df_out = pd.concat([df_hist, df_future], ignore_index=True)
+
         return XGBoostRunResponse(
             y_col=y_col,
             predictors=predictors,
             feature_cols=feature_cols,
-            n=len(df),
+            n=len(df_out),
             n_train=n_train,
             n_test=n_test,
             xgb_params={k: (float(v) if isinstance(v, np.floating) else v) for k, v in xgb_params.items()},
@@ -354,7 +379,7 @@ def xgboost_run(req: XGBoostRunRequest):
             y_forecast=y_forecast_list,
             horizon=horizon,
             n_obs=len(df_hist),
-            df=df.to_dict(orient="records") if req.return_df else None,
+            df=df_out.to_dict(orient="records") if req.return_df else None,
         )
 
     except HTTPException:

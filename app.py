@@ -16,7 +16,6 @@ app_ui = ui.page_fluid(
         ui.div(
             ui.img(src="images/logo_sicuma.png", height="60px", class_="logo-img"),
             ui.h1(get_config("frontend.shiny.title")),
-            ui.p("Nuestro enfoque imagina que estamos en Noviembre de 2024"),
             class_="app-header-content"
         ),
         class_="app-header"
@@ -55,9 +54,45 @@ def server(input, output, session):
         if selected_module_rv.get() is not None:
             return ui.div()
         return ui.div(
-            ui.input_action_button("open_predicciones", "Predicciones", class_="home-choice-card"),
-            ui.input_action_button("open_escenarios", "Escenarios", class_="home-choice-card"),
-            class_="home-choice-grid",
+            ui.h3("¿Qué quieres hacer?", style="text-align:center; margin-bottom:8px;"),
+            ui.tags.p(
+                "Selecciona el módulo con el que quieres trabajar",
+                style="text-align:center; color:#475569; margin-bottom:24px;",
+            ),
+            ui.tags.div(
+                ui.tags.div(
+                    ui.input_action_button(
+                        "open_predicciones",
+                        ui.tags.div(
+                            ui.tags.div("\U0001f52e", style="font-size:2.5rem; margin-bottom:8px;"),
+                            ui.tags.div("Predicciones", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
+                            ui.tags.div(
+                                "Genera pronósticos con SARIMAX/XGBoost y compara métricas del modelo.",
+                                style="font-size:0.85rem; color:#64748b; font-weight:400;",
+                            ),
+                        ),
+                        class_="esc-type-card",
+                    ),
+                    style="width:300px; height:220px; display:flex; flex-shrink:0;",
+                ),
+                ui.tags.div(
+                    ui.input_action_button(
+                        "open_escenarios",
+                        ui.tags.div(
+                            ui.tags.div("\U0001f680", style="font-size:2.5rem; margin-bottom:8px;"),
+                            ui.tags.div("Escenarios", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
+                            ui.tags.div(
+                                "Simula escenarios futuros modificando exógenas y analiza el impacto en la predicción.",
+                                style="font-size:0.85rem; color:#64748b; font-weight:400;",
+                            ),
+                        ),
+                        class_="esc-type-card",
+                    ),
+                    style="width:300px; height:220px; display:flex; flex-shrink:0;",
+                ),
+                style="display:flex; flex-direction:row; justify-content:center; gap:24px;",
+            ),
+            style="margin:0 auto; padding-top:40px;",
         )
 
     @output

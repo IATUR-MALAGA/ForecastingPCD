@@ -166,6 +166,13 @@ def _infer_future_index(df_hist: pd.DataFrame, horizon: int, monthly_hint: bool)
     return pd.date_range(start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D")
 
 
+def _normalize_future_dt(value: str, monthly_hint: bool) -> pd.Timestamp:
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        _raise_422(f"Fecha inválida en scenario_future_values: {value}")
+    return dt.to_period("M").to_timestamp(how="start") if monthly_hint else dt.normalize()
+
+
 def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], dt_col: str, exog_cols: list[str]) -> pd.DataFrame:
     out = df.copy()
     for ov in overrides:
@@ -223,7 +230,7 @@ def sarimax_run(req: SarimaxRunRequest):
         y_col = _safe_alias(req.target_var)
         exog_cols = _prepare_exog_cols(req)
 
-        df, dia_col, mes_col, _ = _build_time_index(df)
+        df, dia_col, mes_col, ano_col = _build_time_index(df)
         df, exog_cols, use_fourier = _maybe_add_fourier(df, req, dia_col, exog_cols)
         df = _force_numeric(df, y_col, exog_cols)
 
@@ -285,6 +292,11 @@ def sarimax_run(req: SarimaxRunRequest):
 
         monthly_hint = mes_col is not None and dia_col is None
         future_index = _infer_future_index(df_hist, horizon, monthly_hint)
+        if req.scenario_mode == "future" and req.scenario_future_values:
+            provided_dates = sorted({_normalize_future_dt(fv.date, monthly_hint) for fv in req.scenario_future_values})
+            if len(provided_dates) != horizon:
+                _raise_422("En scenario_mode='future', scenario_future_values debe cubrir exactamente 'horizon' fechas únicas")
+            future_index = pd.DatetimeIndex(provided_dates)
         df_future = pd.DataFrame({"__dt": future_index})
 
         existing_future = df.loc[~mask_hist].copy()
@@ -295,7 +307,7 @@ def sarimax_run(req: SarimaxRunRequest):
         for fv in req.scenario_future_values:
             var = _safe_alias(fv.var)
             if var in exog_cols:
-                date = pd.to_datetime(fv.date)
+                date = _normalize_future_dt(fv.date, monthly_hint)
                 df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(fv.value)
 
         if exog_cols:
@@ -322,10 +334,22 @@ def sarimax_run(req: SarimaxRunRequest):
         model_fit_full = create_sarimax_model(train=df_hist, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
         y_forecast = model_fit_full.predict(start=len(df_hist), end=len(df_hist) + horizon - 1, exog=exog_future)
 
+        # Populate calendar columns in df_future from __dt
+        fut_dt = pd.to_datetime(df_future["__dt"])
+        if ano_col and ano_col in df_hist.columns:
+            df_future[ano_col] = fut_dt.dt.year
+        if mes_col and mes_col in df_hist.columns:
+            df_future[mes_col] = fut_dt.dt.month
+        if dia_col and dia_col in df_hist.columns:
+            df_future[dia_col] = fut_dt.dt.day
+
+        # Build output df: historical rows + future rows (ensures n_obs + horizon rows)
+        df_out = pd.concat([df_hist, df_future], ignore_index=True)
+
         return SarimaxRunResponse(
             y_col=y_col,
             exog_cols=exog_cols,
-            n=len(df),
+            n=len(df_out),
             n_train=n_train,
             n_test=n_test,
             order=order,
@@ -337,7 +361,7 @@ def sarimax_run(req: SarimaxRunRequest):
             y_forecast=[float(x) for x in list(y_forecast)],
             horizon=horizon,
             n_obs=len(df_hist),
-            df=df.to_dict(orient="records") if req.return_df else None,
+            df=df_out.to_dict(orient="records") if req.return_df else None,
         )
 
     except HTTPException:
