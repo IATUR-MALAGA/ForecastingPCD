@@ -12,19 +12,13 @@ from back.api.routes.SARIMAX_model import FilterSelection
 from back.config import settings
 from back.models.XGBoost.xgboost_model import best_xgboost_params, create_xgboost_model
 from back.models.XGBoost.xgboost_statistics import compute_metrics
-from front.utils.utils import (
-    _find_col,
-    _safe_alias,
-    create_dataframe_based_on_selection,
-)
+from front.utils.utils import _find_col, _safe_alias, create_dataframe_based_on_selection
 
 
 COMMON_CFG = settings.get("models.common", {})
 XGBOOST_CFG = settings.get("models.xgboost", {})
 XGB_ENGINE_CFG = XGBOOST_CFG.get("engine", {}) if isinstance(XGBOOST_CFG, dict) else {}
-XGB_DEFAULT_PARAMS_CFG = (
-    XGBOOST_CFG.get("default_params", {}) if isinstance(XGBOOST_CFG, dict) else {}
-)
+XGB_DEFAULT_PARAMS_CFG = XGBOOST_CFG.get("default_params", {}) if isinstance(XGBOOST_CFG, dict) else {}
 
 
 router = APIRouter(
@@ -57,9 +51,7 @@ class XGBoostRunRequest(BaseModel):
     predictors: list[str] = Field(default_factory=list)
     filters_by_var: Optional[dict[str, list[FilterSelection]]] = None
 
-    train_ratio: float = Field(
-        float(COMMON_CFG.get("train_ratio", 0.70)), gt=0.0, lt=1.0
-    )
+    train_ratio: float = Field(float(COMMON_CFG.get("train_ratio", 0.70)), gt=0.0, lt=1.0)
 
     auto_params: bool = bool(XGBOOST_CFG.get("auto_params", True))
     xgb_params: Optional[Dict[str, Any]] = None
@@ -104,21 +96,12 @@ def _raise_422(detail: str) -> None:
     raise HTTPException(status_code=422, detail=detail)
 
 
-def _recursive_predict(
-    model,
-    train: pd.DataFrame,
-    test: pd.DataFrame,
-    y_col: str,
-    feature_cols: list[str],
-    max_lag: int,
-) -> pd.Series:
+def _recursive_predict(model, train: pd.DataFrame, test: pd.DataFrame, y_col: str, feature_cols: list[str], max_lag: int) -> pd.Series:
     if max_lag <= 0:
         raise ValueError("recursive_forecast=True requiere max_lag > 0.")
     hist = list(train[y_col].to_numpy())
     if len(hist) < max_lag:
-        raise ValueError(
-            f"No hay suficiente histórico para max_lag={max_lag} (train tiene {len(hist)} filas)."
-        )
+        raise ValueError(f"No hay suficiente histórico para max_lag={max_lag} (train tiene {len(hist)} filas).")
 
     preds = []
     idxs = list(test.index)
@@ -130,9 +113,7 @@ def _recursive_predict(
                 row[col] = hist[-int(m.group("k"))]
             else:
                 if col not in test.columns:
-                    raise ValueError(
-                        f"Feature '{col}' no está en test. Revisa tu dataframe/selección."
-                    )
+                    raise ValueError(f"Feature '{col}' no está en test. Revisa tu dataframe/selección.")
                 row[col] = test.iloc[i][col]
         X_step = pd.DataFrame([row], index=[idxs[i]])
         y_hat = float(model.predict(X_step)[0])
@@ -141,32 +122,15 @@ def _recursive_predict(
     return pd.Series(preds, index=test.index, name=y_col)
 
 
-def _build_time_index(
-    df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, Optional[str], Optional[str]]:
+def _build_time_index(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[str], Optional[str], Optional[str]]:
     dia_col = _find_col(df, "dia", _safe_alias("dia"))
     mes_col = _find_col(df, "mes", _safe_alias("mes"))
-    ano_col = _find_col(
-        df,
-        "anio",
-        "año",
-        "ano",
-        _safe_alias("anio"),
-        _safe_alias("año"),
-        _safe_alias("ano"),
-    )
+    ano_col = _find_col(df, "anio", "año", "ano", _safe_alias("anio"), _safe_alias("año"), _safe_alias("ano"))
 
     out = df.copy()
     if ano_col and mes_col and ano_col in out.columns and mes_col in out.columns:
         day = out[dia_col] if dia_col and dia_col in out.columns else 1
-        out["__dt"] = pd.to_datetime(
-            dict(
-                year=pd.to_numeric(out[ano_col], errors="coerce"),
-                month=pd.to_numeric(out[mes_col], errors="coerce"),
-                day=pd.to_numeric(day, errors="coerce"),
-            ),
-            errors="coerce",
-        )
+        out["__dt"] = pd.to_datetime(dict(year=pd.to_numeric(out[ano_col], errors="coerce"), month=pd.to_numeric(out[mes_col], errors="coerce"), day=pd.to_numeric(day, errors="coerce")), errors="coerce")
     elif isinstance(out.index, pd.DatetimeIndex):
         out["__dt"] = pd.to_datetime(out.index)
     elif "fecha" in out.columns:
@@ -174,23 +138,16 @@ def _build_time_index(
     else:
         _raise_422("No fue posible construir un time_index robusto")
 
-    out = (
-        out.dropna(subset=["__dt"])
-        .sort_values("__dt", kind="mergesort")
-        .reset_index(drop=True)
-    )
-    return out, dia_col, mes_col
+    out = out.dropna(subset=["__dt"]).sort_values("__dt", kind="mergesort").reset_index(drop=True)
+    return out, dia_col, mes_col, ano_col
 
 
-def _apply_overrides(
-    df: pd.DataFrame, overrides: list[ScenarioOverride], predictors: list[str]
-) -> pd.DataFrame:
+def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], predictors: list[str]) -> pd.DataFrame:
     out = df.copy()
     for ov in overrides:
         var = _safe_alias(ov.var)
         if var not in predictors or var not in out.columns:
             continue
-        out[var] = pd.to_numeric(out[var], errors="coerce").astype(float)
         mask = pd.Series(True, index=out.index)
         if ov.start:
             mask &= pd.to_datetime(out["__dt"]) >= pd.to_datetime(ov.start)
@@ -199,23 +156,15 @@ def _apply_overrides(
         if ov.op == "set":
             out.loc[mask, var] = float(ov.value)
         elif ov.op == "add":
-            out.loc[mask, var] = pd.to_numeric(
-                out.loc[mask, var], errors="coerce"
-            ) + float(ov.value)
+            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") + float(ov.value)
         elif ov.op == "mul":
-            out.loc[mask, var] = pd.to_numeric(
-                out.loc[mask, var], errors="coerce"
-            ) * float(ov.value)
+            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * float(ov.value)
         elif ov.op == "pct":
-            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * (
-                1 + (float(ov.value) / 100.0)
-            )
+            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * (1 + (float(ov.value) / 100.0))
     return out
 
 
-def _add_target_lags_hist(
-    df_hist: pd.DataFrame, y_col: str, max_lag: int
-) -> Tuple[pd.DataFrame, List[str]]:
+def _add_target_lags_hist(df_hist: pd.DataFrame, y_col: str, max_lag: int) -> Tuple[pd.DataFrame, List[str]]:
     if max_lag <= 0:
         return df_hist.copy(), []
     out = df_hist.copy()
@@ -230,36 +179,28 @@ def _add_target_lags_hist(
     return out, lag_cols
 
 
-def _infer_future_index(
-    df_hist: pd.DataFrame, horizon: int, monthly_hint: bool
-) -> pd.DatetimeIndex:
+def _infer_future_index(df_hist: pd.DataFrame, horizon: int, monthly_hint: bool) -> pd.DatetimeIndex:
     last_dt = pd.to_datetime(df_hist["__dt"]).max()
     if monthly_hint:
-        return pd.date_range(
-            start=(last_dt + pd.offsets.MonthBegin(1)).normalize(),
-            periods=horizon,
-            freq="MS",
-        )
-    return pd.date_range(
-        start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D"
-    )
+        return pd.date_range(start=(last_dt + pd.offsets.MonthBegin(1)).normalize(), periods=horizon, freq="MS")
+    return pd.date_range(start=last_dt + pd.Timedelta(days=1), periods=horizon, freq="D")
+
+
+def _normalize_future_dt(value: str, monthly_hint: bool) -> pd.Timestamp:
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        _raise_422(f"Fecha inválida en scenario_future_values: {value}")
+    return dt.to_period("M").to_timestamp(how="start") if monthly_hint else dt.normalize()
 
 
 def _validate_missing_future(df_future: pd.DataFrame, predictors: list[str]) -> None:
     missing = []
     for var in predictors:
-        miss_rows = (
-            df_future[df_future[var].isna()]["__dt"] if var in df_future.columns else []
-        )
+        miss_rows = df_future[df_future[var].isna()]["__dt"] if var in df_future.columns else []
         for dt in miss_rows:
-            missing.append(
-                {"var": var, "date": pd.to_datetime(dt).strftime("%Y-%m-%d")}
-            )
+            missing.append({"var": var, "date": pd.to_datetime(dt).strftime("%Y-%m-%d")})
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail={"detail": "Missing future exogenous values", "missing": missing},
-        )
+        raise HTTPException(status_code=400, detail={"detail": "Missing future exogenous values", "missing": missing})
 
 
 @router.post("/run", response_model=XGBoostRunResponse)
@@ -268,10 +209,7 @@ def xgboost_run(req: XGBoostRunRequest):
         df = create_dataframe_based_on_selection(
             target_var=req.target_var,
             predictors=req.predictors,
-            filters_by_var={
-                k: [f.model_dump() for f in v]
-                for k, v in (req.filters_by_var or {}).items()
-            },
+            filters_by_var={k: [f.model_dump() for f in v] for k, v in (req.filters_by_var or {}).items()},
         )
         if df is None or df.empty:
             _raise_422("El dataframe resultante está vacío")
@@ -281,18 +219,11 @@ def xgboost_run(req: XGBoostRunRequest):
         if y_col not in df.columns:
             _raise_422(f"No existe la columna objetivo '{y_col}' en el dataframe")
 
-        df, dia_col, mes_col = _build_time_index(df)
+        df, dia_col, mes_col, ano_col = _build_time_index(df)
         for c in [y_col] + predictors:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         df = df.replace([np.inf, -np.inf], np.nan)
-
-        missing_predictors = [c for c in predictors if c not in df.columns]
-        if missing_predictors:
-            _raise_422(
-                "No hay datos para las predictoras seleccionadas con el rango/filtros actuales: "
-                + ", ".join(missing_predictors)
-            )
 
         mask_hist = df[y_col].notna()
         df_hist = df.loc[mask_hist].copy()
@@ -309,10 +240,7 @@ def xgboost_run(req: XGBoostRunRequest):
             ws = pd.to_datetime(req.scenario_window.start)
             we = pd.to_datetime(req.scenario_window.end)
             train = df_hist[pd.to_datetime(df_hist["__dt"]) < ws].copy()
-            test = df_hist[
-                (pd.to_datetime(df_hist["__dt"]) >= ws)
-                & (pd.to_datetime(df_hist["__dt"]) <= we)
-            ].copy()
+            test = df_hist[(pd.to_datetime(df_hist["__dt"]) >= ws) & (pd.to_datetime(df_hist["__dt"]) <= we)].copy()
             if train.empty or test.empty:
                 _raise_422("No hay datos suficientes para la ventana solicitada")
             if predictors:
@@ -321,20 +249,12 @@ def xgboost_run(req: XGBoostRunRequest):
                 if test[predictors].isna().any().any():
                     _raise_422("Hay NaNs en predictores de la ventana de escenario")
 
-            train_size_est = len(train)
-            max_lag_allowed = max(0, train_size_est - 1)
-            effective_max_lag = max(0, min(int(req.max_lag), max_lag_allowed))
-
             df_hist_sup, lag_cols = (train.copy(), [])
-            if req.use_target_lags and effective_max_lag > 0:
-                df_hist_sup, lag_cols = _add_target_lags_hist(
-                    train, y_col=y_col, max_lag=effective_max_lag
-                )
+            if req.use_target_lags and req.max_lag > 0:
+                df_hist_sup, lag_cols = _add_target_lags_hist(train, y_col=y_col, max_lag=req.max_lag)
             feature_cols = predictors + lag_cols
             if not feature_cols:
-                _raise_422(
-                    "No hay features. Activa use_target_lags o añade predictors."
-                )
+                _raise_422("No hay features. Activa use_target_lags o añade predictors.")
 
             xgb_params = req.xgb_params or {
                 **XGB_DEFAULT_PARAMS_CFG,
@@ -343,28 +263,12 @@ def xgboost_run(req: XGBoostRunRequest):
                 "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)),
                 "random_state": int(XGBOOST_CFG.get("random_state", 42)),
             }
-            model_fit = create_xgboost_model(
-                train=df_hist_sup,
-                exog_cols=feature_cols,
-                column_y=y_col,
-                xgb_params=xgb_params,
-            )
-            if req.recursive_forecast and req.use_target_lags and effective_max_lag > 0:
-                y_forecast = _recursive_predict(
-                    model_fit,
-                    train=train,
-                    test=test,
-                    y_col=y_col,
-                    feature_cols=feature_cols,
-                    max_lag=effective_max_lag,
-                )
+            model_fit = create_xgboost_model(train=df_hist_sup, exog_cols=feature_cols, column_y=y_col, xgb_params=xgb_params)
+            if req.recursive_forecast and req.use_target_lags and req.max_lag > 0:
+                y_forecast = _recursive_predict(model_fit, train=train, test=test, y_col=y_col, feature_cols=feature_cols, max_lag=req.max_lag)
             else:
-                y_forecast = pd.Series(
-                    model_fit.predict(test[feature_cols]), index=test.index, name=y_col
-                )
-            mape, rmse, mae = compute_metrics(
-                pred=y_forecast, df_test=test, indicador=y_col
-            )
+                y_forecast = pd.Series(model_fit.predict(test[feature_cols]), index=test.index, name=y_col)
+            mape, rmse, mae = compute_metrics(pred=y_forecast, df_test=test, indicador=y_col)
             return XGBoostRunResponse(
                 y_col=y_col,
                 predictors=predictors,
@@ -372,10 +276,7 @@ def xgboost_run(req: XGBoostRunRequest):
                 n=len(df),
                 n_train=len(train),
                 n_test=len(test),
-                xgb_params={
-                    k: (float(v) if isinstance(v, np.floating) else v)
-                    for k, v in xgb_params.items()
-                },
+                xgb_params={k: (float(v) if isinstance(v, np.floating) else v) for k, v in xgb_params.items()},
                 mape=float(mape),
                 rmse=float(rmse),
                 mae=float(mae),
@@ -384,10 +285,7 @@ def xgboost_run(req: XGBoostRunRequest):
                 horizon=len(test),
                 n_obs=len(df_hist),
                 y_true=test[y_col].astype(float).tolist(),
-                window={
-                    "start": ws.strftime("%Y-%m-%d"),
-                    "end": we.strftime("%Y-%m-%d"),
-                },
+                window={"start": ws.strftime("%Y-%m-%d"), "end": we.strftime("%Y-%m-%d")},
                 df=df.to_dict(orient="records") if req.return_df else None,
             )
 
@@ -397,64 +295,30 @@ def xgboost_run(req: XGBoostRunRequest):
 
         monthly_hint = mes_col is not None and dia_col is None
         future_index = _infer_future_index(df_hist, horizon, monthly_hint)
+        if req.scenario_mode == "future" and req.scenario_future_values:
+            provided_dates = sorted({_normalize_future_dt(fv.date, monthly_hint) for fv in req.scenario_future_values})
+            if len(provided_dates) != horizon:
+                _raise_422("En scenario_mode='future', scenario_future_values debe cubrir exactamente 'horizon' fechas únicas")
+            future_index = pd.DatetimeIndex(provided_dates)
         df_future = pd.DataFrame({"__dt": future_index})
         existing_future = df.loc[~mask_hist].copy()
         if not existing_future.empty:
-            existing_future = existing_future.drop_duplicates(
-                subset=["__dt"], keep="last"
-            )
-            df_future = df_future.merge(
-                existing_future[
-                    ["__dt", *[c for c in predictors if c in existing_future.columns]]
-                ],
-                on="__dt",
-                how="left",
-            )
-
-        for c in predictors:
-            if c not in df_future.columns:
-                df_future[c] = np.nan
+            existing_future = existing_future.drop_duplicates(subset=["__dt"], keep="last")
+            df_future = df_future.merge(existing_future[["__dt", *[c for c in predictors if c in existing_future.columns]]], on="__dt", how="left")
 
         for fv in req.scenario_future_values:
             var = _safe_alias(fv.var)
             if var in predictors:
-                df_future.loc[
-                    pd.to_datetime(df_future["__dt"]) == pd.to_datetime(fv.date), var
-                ] = float(fv.value)
+                date = _normalize_future_dt(fv.date, monthly_hint)
+                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(fv.value)
         if predictors:
-            df_future = _apply_overrides(
-                df_future,
-                req.scenario_overrides if req.scenario_mode == "future" else [],
-                predictors,
-            )
+            df_future = _apply_overrides(df_future, req.scenario_overrides if req.scenario_mode == "future" else [], predictors)
             _validate_missing_future(df_future, predictors)
             df_hist.loc[:, predictors] = df_hist[predictors].fillna(0.0)
 
-        min_hist_rows = int(COMMON_CFG.get("min_historical_rows", 3))
-        train_size_est = int(len(df_hist) * req.train_ratio)
-        max_lag_allowed_hist = max(0, len(df_hist) - min_hist_rows)
-        max_lag_allowed_train = max(0, train_size_est - 1)
-        effective_max_lag = max(
-            0, min(int(req.max_lag), max_lag_allowed_hist, max_lag_allowed_train)
-        )
-
-        # Ajuste adicional: tras crear lags y hacer split, train debe tener al menos (lag + 1) filas
-        # para poder usar predicción recursiva sin errores.
-        N = len(df_hist)
-        r = float(req.train_ratio)
-        while effective_max_lag > 0:
-            n_after_lag = N - effective_max_lag
-            n_train_after_lag = int(n_after_lag * r)
-            n_test_after_lag = n_after_lag - n_train_after_lag
-            if n_train_after_lag > effective_max_lag and n_test_after_lag > 0:
-                break
-            effective_max_lag -= 1
-
         df_hist_sup, lag_cols = (df_hist.copy(), [])
-        if req.use_target_lags and effective_max_lag > 0:
-            df_hist_sup, lag_cols = _add_target_lags_hist(
-                df_hist, y_col=y_col, max_lag=effective_max_lag
-            )
+        if req.use_target_lags and req.max_lag > 0:
+            df_hist_sup, lag_cols = _add_target_lags_hist(df_hist, y_col=y_col, max_lag=req.max_lag)
         feature_cols = predictors + lag_cols
         if not feature_cols:
             _raise_422("No hay features. Activa use_target_lags o añade predictors.")
@@ -463,98 +327,51 @@ def xgboost_run(req: XGBoostRunRequest):
         n_train = int(n * req.train_ratio)
         n_test = n - n_train
         if n_train <= 0 or n_test <= 0:
-            _raise_422(
-                f"Split inválido (histórico): n={n}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio."
-            )
+            _raise_422(f"Split inválido (histórico): n={n}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio.")
 
         train = df_hist_sup.iloc[:n_train].copy()
-        test = df_hist_sup.iloc[n_train : n_train + n_test].copy()
+        test = df_hist_sup.iloc[n_train:n_train + n_test].copy()
 
         if req.auto_params:
-            cv_splits = int(XGBOOST_CFG.get("auto_search", {}).get("cv_splits", 3))
-            if n_train <= cv_splits:
-                xgb_params = {
-                    **XGB_DEFAULT_PARAMS_CFG,
-                    "objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"),
-                    "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"),
-                    "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)),
-                    "random_state": int(XGBOOST_CFG.get("random_state", 42)),
-                }
-            else:
-                best_params = best_xgboost_params(
-                    df=df_hist_sup,
-                    exog_cols=feature_cols,
-                    column_y=y_col,
-                    periodos_a_predecir=n_test,
-                    random_state=int(XGBOOST_CFG.get("random_state", 42)),
-                )
-                xgb_params = {
-                    **XGB_DEFAULT_PARAMS_CFG,
-                    "objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"),
-                    "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"),
-                    "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)),
-                    "random_state": int(XGBOOST_CFG.get("random_state", 42)),
-                    **best_params,
-                }
+            best_params = best_xgboost_params(df=df_hist_sup, exog_cols=feature_cols, column_y=y_col, periodos_a_predecir=n_test, random_state=int(XGBOOST_CFG.get("random_state", 42)))
+            xgb_params = {"objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"), "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"), "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)), "random_state": int(XGBOOST_CFG.get("random_state", 42)), **best_params}
         else:
-            xgb_params = req.xgb_params or {
-                **XGB_DEFAULT_PARAMS_CFG,
-                "objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"),
-                "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"),
-                "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)),
-                "random_state": int(XGBOOST_CFG.get("random_state", 42)),
-            }
+            xgb_params = req.xgb_params or {**XGB_DEFAULT_PARAMS_CFG, "objective": XGB_ENGINE_CFG.get("objective", "reg:squarederror"), "tree_method": XGB_ENGINE_CFG.get("tree_method", "hist"), "n_jobs": int(XGB_ENGINE_CFG.get("n_jobs", 1)), "random_state": int(XGBOOST_CFG.get("random_state", 42))}
 
-        model_fit = create_xgboost_model(
-            train=train, exog_cols=feature_cols, column_y=y_col, xgb_params=xgb_params
-        )
-        if req.recursive_forecast and req.use_target_lags and effective_max_lag > 0:
-            pred_test = _recursive_predict(
-                model_fit,
-                train=train,
-                test=test,
-                y_col=y_col,
-                feature_cols=feature_cols,
-                max_lag=effective_max_lag,
-            )
+        model_fit = create_xgboost_model(train=train, exog_cols=feature_cols, column_y=y_col, xgb_params=xgb_params)
+        if req.recursive_forecast and req.use_target_lags and req.max_lag > 0:
+            pred_test = _recursive_predict(model_fit, train=train, test=test, y_col=y_col, feature_cols=feature_cols, max_lag=req.max_lag)
         else:
-            pred_test = pd.Series(
-                model_fit.predict(test[feature_cols]), index=test.index, name=y_col
-            )
+            pred_test = pd.Series(model_fit.predict(test[feature_cols]), index=test.index, name=y_col)
         mape, rmse, mae = compute_metrics(pred=pred_test, df_test=test, indicador=y_col)
 
-        model_fit_full = create_xgboost_model(
-            train=df_hist_sup,
-            exog_cols=feature_cols,
-            column_y=y_col,
-            xgb_params=xgb_params,
-        )
-        if req.use_target_lags and effective_max_lag > 0:
-            y_forecast = _recursive_predict(
-                model_fit_full,
-                train=df_hist,
-                test=df_future,
-                y_col=y_col,
-                feature_cols=feature_cols,
-                max_lag=effective_max_lag,
-            )
+        model_fit_full = create_xgboost_model(train=df_hist_sup, exog_cols=feature_cols, column_y=y_col, xgb_params=xgb_params)
+        if req.use_target_lags and req.max_lag > 0:
+            y_forecast = _recursive_predict(model_fit_full, train=df_hist, test=df_future, y_col=y_col, feature_cols=feature_cols, max_lag=req.max_lag)
             y_forecast_list = [float(x) for x in y_forecast.values]
         else:
-            y_forecast_list = [
-                float(x) for x in model_fit_full.predict(df_future[feature_cols])
-            ]
+            y_forecast_list = [float(x) for x in model_fit_full.predict(df_future[feature_cols])]
+
+        # Populate calendar columns in df_future from __dt
+        fut_dt = pd.to_datetime(df_future["__dt"])
+        if ano_col and ano_col in df_hist.columns:
+            df_future[ano_col] = fut_dt.dt.year
+        if mes_col and mes_col in df_hist.columns:
+            df_future[mes_col] = fut_dt.dt.month
+        if dia_col and dia_col in df_hist.columns:
+            df_future[dia_col] = fut_dt.dt.day
+
+        # Build output df: historical rows + future rows (ensures n_obs + horizon rows)
+        df_out = pd.concat([df_hist, df_future], ignore_index=True)
 
         return XGBoostRunResponse(
             y_col=y_col,
             predictors=predictors,
             feature_cols=feature_cols,
-            n=len(df),
+            n=len(df_out),
             n_train=n_train,
             n_test=n_test,
-            xgb_params={
-                k: (float(v) if isinstance(v, np.floating) else v)
-                for k, v in xgb_params.items()
-            },
+            xgb_params={k: (float(v) if isinstance(v, np.floating) else v) for k, v in xgb_params.items()},
             mape=float(mape),
             rmse=float(rmse),
             mae=float(mae),
@@ -562,7 +379,7 @@ def xgboost_run(req: XGBoostRunRequest):
             y_forecast=y_forecast_list,
             horizon=horizon,
             n_obs=len(df_hist),
-            df=df.to_dict(orient="records") if req.return_df else None,
+            df=df_out.to_dict(orient="records") if req.return_df else None,
         )
 
     except HTTPException:
