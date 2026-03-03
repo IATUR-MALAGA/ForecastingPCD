@@ -16,6 +16,7 @@ from front.utils.utils import (
     compatibilidad_con_objetivo,
     create_calendar_filter,
     detect_temporal_filters,
+    fmt as _fmt,
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
     panel_styles,
@@ -418,6 +419,7 @@ def escenarios_server(input, output, session):
         ts, te = cache.get_date_range(target) if target else (None, None)
 
         selected_set = set(selected_predictors())
+        target_temp = _fmt(target_meta.get("temporalidad"))
 
         panels = []
         for cat, names in grouped.items():
@@ -436,11 +438,29 @@ def escenarios_server(input, output, session):
                     cache=cache,
                 )
 
-                info_icon = (
-                    ui.tooltip(ui.tags.span(ui.HTML(ICON_SVG_INFO)), reason)
-                    if (not ok and reason)
-                    else None
+                badge = ui.tags.span(
+                    "Compatible" if ok else "No compatible",
+                    class_=(
+                        "compat-badge compat-yes"
+                        if ok
+                        else "compat-badge compat-no"
+                    ),
                 )
+
+                info_icon = None
+                if not ok and reason:
+                    info_icon = ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        reason,
+                    )
+                temporalidad = _fmt(meta.get("temporalidad"))
+                granularidad = _fmt(meta.get("granularidad"))
+                unidad_medida = _fmt(meta.get("unidad_medida"))
+                fuente = _fmt(meta.get("fuente"))
+                descripcion = _fmt(meta.get("descripcion"))
+
 
                 selector = (
                     ui.input_checkbox(var_id, name, value=(name in selected_set))
@@ -449,21 +469,53 @@ def escenarios_server(input, output, session):
                 )
 
                 blocks.append(
-                    ui.div(
-                        selector,
-                        ui.tags.span(
-                            "Compatible" if ok else "No compatible",
-                            class_=(
-                                "compat-badge compat-yes"
-                                if ok
-                                else "compat-badge compat-no"
-                            ),
-                            style="margin-left:8px;",
+                     ui.tags.div(
+                        ui.tags.div(
+                            selector,
+                            badge,
+                            info_icon,
+                            style="display: flex; align-items: baseline; gap: 6px;",
                         ),
-                        info_icon,
+                        ui.tags.details(
+                            ui.tags.summary(
+                                "Ver más",
+                                style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;",
+                            ),
+                            ui.tags.div(
+                                ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                ),
+                                style="margin-top: 8px; padding: 8px 0;",
+                            ),
+                        ),
                         class_="var-item",
                     )
                 )
+
 
             panels.append(ui.accordion_panel(cat, ui.div(*blocks), value=_slug(cat)))
 
