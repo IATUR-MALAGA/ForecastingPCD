@@ -724,6 +724,19 @@ def escenarios_server(input, output, session):
         return list(predictors_rv.get() or [])
 
     @reactive.Calc
+    def fut_active_exogs() -> list[str]:
+        exogs = fut_exogs()
+        if "esc_fut_active_exogs" not in input:
+            return exogs
+
+        selected = input.esc_fut_active_exogs() or []
+        if isinstance(selected, str):
+            selected = [selected]
+
+        selected_set = set(selected)
+        return [ex for ex in exogs if ex in selected_set]
+
+    @reactive.Calc
     def fut_model() -> str:
         if "esc_fut_model" not in input:
             return "sarimax"
@@ -738,7 +751,7 @@ def escenarios_server(input, output, session):
         """
         dict: exog -> [P1..Ph] (None si no relleno)
         """
-        exogs = fut_exogs()
+        exogs = fut_active_exogs()
         h = fut_horizon()
         out: dict[str, list[float | None]] = {}
         for ex in exogs:
@@ -758,6 +771,7 @@ def escenarios_server(input, output, session):
             fut_model(),
             target_var_rv.get(),
             tuple(fut_exogs()),
+            tuple(fut_active_exogs()),
             fut_horizon(),
             repr(fut_matrix_values()),
             repr(selected_filters_by_var()),
@@ -769,19 +783,48 @@ def escenarios_server(input, output, session):
     # ------------------------
     @output
     @render.ui
-    def esc_future_exog_table():
+    def esc_future_exog_selector():
         if current_step.get() != 4:
             return ui.div()
 
         exogs = fut_exogs()
+        if not exogs:
+            return ui.div()
+
+        return ui.tags.div(
+            ui.tags.b("2) Exógenas activas"),
+            ui.input_checkbox_group(
+                "esc_fut_active_exogs",
+                label="",
+                choices={ex: ex for ex in exogs},
+                selected=exogs,
+                inline=False,
+            ),
+            ui.tags.span(
+                "Desmarca una exógena para excluirla del cálculo y ocultar sus valores futuros.",
+                style="font-size:12px; color:#6b7280;",
+            ),
+            style=(
+                "margin-top:10px; padding:10px 12px; border:1px solid #e5e7eb; "
+                "border-radius:12px; background:#fff;"
+            ),
+        )
+
+    @output
+    @render.ui
+    def esc_future_exog_table():
+        if current_step.get() != 4:
+            return ui.div()
+
+        exogs = fut_active_exogs()
         h = fut_horizon()
         idx = fut_future_index()
         temp = target_temporalidad()
 
         if not exogs:
             return ui.tags.div(
-                ui.tags.b("No hay exógenas seleccionadas."),
-                ui.tags.span(" Vuelve al Panel 2 para seleccionar al menos una."),
+                ui.tags.b("No hay exógenas activas."),
+                ui.tags.span(" Marca al menos una exógena en el selector para continuar."),
                 style="color:#6b7280;",
             )
 
@@ -821,7 +864,7 @@ def escenarios_server(input, output, session):
 
         return ui.tags.div(
             ui.tags.div(
-                ui.tags.b("2) Valores futuros de exógenas"),
+                ui.tags.b("3) Valores futuros de exógenas activas"),
                 ui.tags.span(" (rellena todas las celdas)"),
                 style="margin-bottom:8px;",
             ),
@@ -857,7 +900,7 @@ def escenarios_server(input, output, session):
 
         try:
             target = target_var_rv.get()
-            exogs = fut_exogs()
+            exogs = fut_active_exogs()
             h = fut_horizon()
             model = fut_model()
             filters = selected_filters_by_var()
@@ -868,7 +911,7 @@ def escenarios_server(input, output, session):
                 return
 
             if not exogs:
-                scenario_err_rv.set("No hay exógenas seleccionadas (Panel 2).")
+                scenario_err_rv.set("No hay exógenas activas en el Panel 4.")
                 last_sig_rv.set(fut_signature())
                 return
 
@@ -1071,6 +1114,7 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             header,
+            ui.output_ui("esc_future_exog_selector"),
             ui.output_ui("esc_future_exog_table"),
             model_box,
             status,
