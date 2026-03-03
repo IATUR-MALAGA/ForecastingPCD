@@ -35,13 +35,13 @@ def escenarios_server(input, output, session):
     # ---------------------------------------------------------------------
     current_step = reactive.Value(0)
 
-    scenario_type_rv = reactive.Value(None)   # "futuro" o "pasado"
-    target_var_rv = reactive.Value(None)      # objetivo seleccionado
-    predictors_rv = reactive.Value([])        # exógenas seleccionadas (panel 2)
+    scenario_type_rv = reactive.Value(None)  # "futuro" o "pasado"
+    target_var_rv = reactive.Value(None)  # objetivo seleccionado
+    predictors_rv = reactive.Value([])  # exógenas seleccionadas (panel 2)
 
-    base_info_rv = reactive.Value(None)       # base histórica cargada (modo pasado)
-    scenario_res_rv = reactive.Value(None)    # resultado de escenario (pasado/futuro)
-    last_sig_rv = reactive.Value(None)        # firma usada para invalidación de resultados
+    base_info_rv = reactive.Value(None)  # base histórica cargada (modo pasado)
+    scenario_res_rv = reactive.Value(None)  # resultado de escenario (pasado/futuro)
+    last_sig_rv = reactive.Value(None)  # firma usada para invalidación de resultados
 
     # ---------------------------------------------------------------------
     # Static data / cache
@@ -78,9 +78,9 @@ def escenarios_server(input, output, session):
             )
         return pd.to_datetime(df.index, errors="coerce")
 
-# ---------------------------------------------------------------------
-# Temporalidad / normalización (mensual vs diario)
-# ---------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Temporalidad / normalización (mensual vs diario)
+    # ---------------------------------------------------------------------
     @reactive.Calc
     def target_temporalidad() -> str:
         meta = cache.get_meta(target_var_rv.get()) or {}
@@ -94,7 +94,11 @@ def escenarios_server(input, output, session):
         """Normaliza timestamp según temporalidad (inicio de mes o inicio de día)."""
         if pd.isna(dt):
             return pd.NaT
-        return dt.to_period("M").to_timestamp(how="start") if is_monthly(temp) else dt.normalize()
+        return (
+            dt.to_period("M").to_timestamp(how="start")
+            if is_monthly(temp)
+            else dt.normalize()
+        )
 
     def granularity(temp: str) -> str:
         """Frecuencia para date_range."""
@@ -132,15 +136,20 @@ def escenarios_server(input, output, session):
             return d.strftime("%Y-%m")
         return d.strftime("%Y-%m-%d")
 
-    def _is_monthly(temp: str) -> bool: 
-        t = (temp or "").lower() 
+    def _is_monthly(temp: str) -> bool:
+        t = (temp or "").lower()
         return ("mes" in t) or ("mens" in t) or ("monthly" in t)
-    
+
     def _dt_label(dt: pd.Timestamp, temp: str) -> str:
-        if pd.isna(dt): 
-            return "" 
-        d = dt.to_period("M").to_timestamp(how="start") if _is_monthly(temp) else dt.normalize() 
+        if pd.isna(dt):
+            return ""
+        d = (
+            dt.to_period("M").to_timestamp(how="start")
+            if _is_monthly(temp)
+            else dt.normalize()
+        )
         return d.strftime("%Y-%m") if _is_monthly(temp) else d.strftime("%Y-%m-%d")
+
     # ---------------------------------------------------------------------
     # Step indicator (opcional)
     # ---------------------------------------------------------------------
@@ -176,18 +185,26 @@ def escenarios_server(input, output, session):
                 nodes.append(ui.tags.div(class_="step-connector"))
 
         stype = scenario_type_rv.get() or ""
-        type_label = "Futuros" if stype == "futuro" else "Pasados" if stype == "pasado" else ""
-        badge = ui.tags.span(
-            f"Modo: Escenarios {type_label}",
-            style=(
-                "margin-left:16px; font-size:0.85rem; color:#4f46e5; "
-                "background:#eef2ff; padding:4px 12px; border-radius:999px; font-weight:600;"
-            ),
-        ) if type_label else ui.span()
+        type_label = (
+            "Futuros" if stype == "futuro" else "Pasados" if stype == "pasado" else ""
+        )
+        badge = (
+            ui.tags.span(
+                f"Modo: Escenarios {type_label}",
+                style=(
+                    "margin-left:16px; font-size:0.85rem; color:#4f46e5; "
+                    "background:#eef2ff; padding:4px 12px; border-radius:999px; font-weight:600;"
+                ),
+            )
+            if type_label
+            else ui.span()
+        )
         return ui.div(
             PANEL_STYLES,
             ui.tags.div(*nodes, class_="step-indicator"),
-            ui.tags.div(badge, style="display:flex; justify-content:flex-end; margin-top:6px;"),
+            ui.tags.div(
+                badge, style="display:flex; justify-content:flex-end; margin-top:6px;"
+            ),
             style="margin:8px 0;",
         )
 
@@ -203,7 +220,10 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.tags.div(
-                ui.h3("¿Qué tipo de escenario quieres explorar?", style="text-align:center; margin-bottom:8px;"),
+                ui.h3(
+                    "¿Qué tipo de escenario quieres explorar?",
+                    style="text-align:center; margin-bottom:8px;",
+                ),
                 ui.tags.p(
                     "Elige entre analizar escenarios sobre datos pasados o generar predicciones hacia el futuro.",
                     style="text-align:center; color:#475569; margin-bottom:24px;",
@@ -213,8 +233,14 @@ def escenarios_server(input, output, session):
                         ui.input_action_button(
                             "esc_choose_pasado",
                             ui.tags.div(
-                                ui.tags.div("\U0001f4c5", style="font-size:2.5rem; margin-bottom:8px;"),
-                                ui.tags.div("Escenarios Pasados", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
+                                ui.tags.div(
+                                    "\U0001f4c5",
+                                    style="font-size:2.5rem; margin-bottom:8px;",
+                                ),
+                                ui.tags.div(
+                                    "Escenarios Pasados",
+                                    style="font-size:1.25rem; font-weight:700; margin-bottom:6px;",
+                                ),
                                 ui.tags.div(
                                     "Modifica valores históricos de las exógenas y observa cómo habría cambiado la predicción.",
                                     style="font-size:0.85rem; color:#64748b; font-weight:400;",
@@ -228,8 +254,14 @@ def escenarios_server(input, output, session):
                         ui.input_action_button(
                             "esc_choose_futuro",
                             ui.tags.div(
-                                ui.tags.div("\U0001f680", style="font-size:2.5rem; margin-bottom:8px;"),
-                                ui.tags.div("Escenarios Futuros", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
+                                ui.tags.div(
+                                    "\U0001f680",
+                                    style="font-size:2.5rem; margin-bottom:8px;",
+                                ),
+                                ui.tags.div(
+                                    "Escenarios Futuros",
+                                    style="font-size:1.25rem; font-weight:700; margin-bottom:6px;",
+                                ),
                                 ui.tags.div(
                                     "Define valores futuros para las exógenas y genera predicciones hacia adelante.",
                                     style="font-size:0.85rem; color:#64748b; font-weight:400;",
@@ -295,7 +327,9 @@ def escenarios_server(input, output, session):
                     ui.input_action_button(
                         btn_id,
                         name,
-                        class_=("var-pick is-selected" if selected == name else "var-pick"),
+                        class_=(
+                            "var-pick is-selected" if selected == name else "var-pick"
+                        ),
                     )
                 )
 
@@ -342,9 +376,28 @@ def escenarios_server(input, output, session):
 
     @reactive.Calc
     def selected_predictors():
+        target = target_var_rv.get()
+        if not target:
+            return []
+
+        target_meta = cache.get_meta(target) or {}
+        target_start, target_end = cache.get_date_range(target)
+
         selected = []
         for var_id, name in predictor_pairs():
-            if var_id in input and input[var_id]():
+            if not (var_id in input and input[var_id]()):
+                continue
+
+            ok, _ = compatibilidad_con_objetivo(
+                predictor_name=name,
+                predictor_meta=cache.get_meta(name),
+                target_name=target,
+                target_meta=target_meta,
+                target_start=target_start,
+                target_end=target_end,
+                cache=cache,
+            )
+            if ok:
                 selected.append(name)
         return sorted(set(selected))
 
@@ -389,12 +442,22 @@ def escenarios_server(input, output, session):
                     else None
                 )
 
+                selector = (
+                    ui.input_checkbox(var_id, name, value=(name in selected_set))
+                    if ok
+                    else ui.tags.span(name, style="font-weight:600; color:#6e7781;")
+                )
+
                 blocks.append(
                     ui.div(
-                        ui.input_checkbox(var_id, name, value=(name in selected_set)),
+                        selector,
                         ui.tags.span(
                             "Compatible" if ok else "No compatible",
-                            class_=("compat-badge compat-yes" if ok else "compat-badge compat-no"),
+                            class_=(
+                                "compat-badge compat-yes"
+                                if ok
+                                else "compat-badge compat-no"
+                            ),
                             style="margin-left:8px;",
                         ),
                         info_icon,
@@ -434,15 +497,15 @@ def escenarios_server(input, output, session):
         target = target_var_rv.get()
         if not target:
             return (None, None)
-        
+
         table = name_to_table.get(target)
         if not table:
             rows = get_tableName_for_variable(target) or []
-            table = (rows[0].get("nombre_tabla") if rows else target)
-        
+            table = rows[0].get("nombre_tabla") if rows else target
+
         filtros = cache.get_filters(table)
         temp = detect_temporal_filters(filtros)
-        
+
         # Si tiene mes o día, usar el date_range selector
         if temp["mes"] or temp["dia"]:
             date_input_id = stable_id("flt", f"{table}__date_range")
@@ -450,7 +513,7 @@ def escenarios_server(input, output, session):
                 date_range = input[date_input_id]()
                 if date_range and len(date_range) == 2:
                     return (date_range[0], date_range[1])
-        
+
         # Si tiene año, usar el selector de años
         elif temp["anio"]:
             anio_input_id = stable_id("flt", f"{table}__anio")
@@ -459,11 +522,11 @@ def escenarios_server(input, output, session):
                 if vals:
                     years = sorted([int(v) for v in vals])
                     return (f"{years[0]}-01-01", f"{years[-1]}-12-31")
-        
+
         # Si no hay selección, devolver None en lugar del rango completo
         # Esto evita sobrescribir la selección del usuario
         return (None, None)
-    
+
     @reactive.Calc
     def vars_to_config() -> list[dict]:
         """
@@ -486,47 +549,121 @@ def escenarios_server(input, output, session):
 
             if not table:
                 rows = get_tableName_for_variable(pretty) or []
-                table = (rows[0].get("nombre_tabla") if rows else pretty)
+                table = rows[0].get("nombre_tabla") if rows else pretty
 
-            out.append({
-                "pretty": pretty, 
-                "table": table,
-                "is_target": (pretty == target)
-            })
+            out.append(
+                {"pretty": pretty, "table": table, "is_target": (pretty == target)}
+            )
 
         return out
-    
+
     @reactive.Calc
     def selected_filters_by_var() -> dict[str, list[dict]]:
         out: dict[str, list[dict]] = {}
+        target_var = target_var_rv.get()
+
+        extend_steps = 0
+        if "esc_fut_horizon" in input:
+            try:
+                extend_steps = max(0, int(input.esc_fut_horizon() or 0))
+            except Exception:
+                extend_steps = 0
+
+        # Primero capturamos los filtros temporales del target
+        target_temporal_filters = []
 
         for item in vars_to_config():
             pretty = item["pretty"]
             table = item["table"]
+            is_target = item["is_target"]
 
             filtros = cache.get_filters(table)
             selected_list: list[dict] = []
-            
+
+            temp = detect_temporal_filters(filtros)
+
+            # Solo capturar filtros temporales si ES el target
+            if is_target and (temp["mes"] or temp["dia"]):
+                date_input_id = stable_id("flt", f"{table}__date_range")
+                if date_input_id in input:
+                    date_range = input[date_input_id]()
+                    if date_range:
+                        temporal_filters = process_date_range_filters(
+                            date_range, filtros, table
+                        )
+                        selected_list.extend(temporal_filters)
+                        # Guardar para aplicar a las exógenas
+                        target_temporal_filters = temporal_filters
+
+            elif is_target and temp["anio"]:
+                anio_input_id = stable_id("flt", f"{table}__anio")
+                if anio_input_id in input:
+                    vals = input[anio_input_id]()
+                    if vals:
+                        temporal_filter = {
+                            "table": table,
+                            "col": temp["anio"]["col"],
+                            "values": list(vals)
+                            if isinstance(vals, (list, tuple))
+                            else [str(vals)],
+                        }
+                        selected_list.append(temporal_filter)
+                        # Guardar para aplicar a las exógenas
+                        target_temporal_filters = [temporal_filter]
+
+            # Si es exógena, aplicar los filtros temporales del target
+            if not is_target and target_temporal_filters:
+                # Adaptar los filtros del target a esta tabla exógena
+                for tf in target_temporal_filters:
+                    if (
+                        tf.get("kind") == "date_range"
+                        or tf.get("col") == "__date_range__"
+                    ):
+                        tf_copy = dict(tf)
+                        tf_copy["table"] = table
+                        if extend_steps > 0 and tf_copy.get("end"):
+                            end_dt = pd.to_datetime(tf_copy.get("end"), errors="coerce")
+                            if pd.notna(end_dt):
+                                if tf_copy.get("day_col"):
+                                    end_dt = end_dt + pd.Timedelta(days=extend_steps)
+                                elif tf_copy.get("month_col"):
+                                    end_dt = end_dt + pd.DateOffset(months=extend_steps)
+                                else:
+                                    end_dt = end_dt + pd.DateOffset(years=extend_steps)
+                                tf_copy["end"] = end_dt.date().isoformat()
+                        selected_list.append(tf_copy)
+                    else:
+                        selected_list.append(
+                            {
+                                "table": table,  # Cambiar a la tabla de la exógena
+                                "col": tf["col"],
+                                "values": tf["values"],
+                            }
+                        )
+
             # Capturar filtros no temporales para todas las variables
             for f in filtros:
                 col_lower = f["col"].lower().strip()
                 if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                    continue  
-                
+                    continue
+
                 input_id = stable_id("flt", f"{f['table']}__{f['col']}")
                 if input_id in input:
                     vals = input[input_id]()
                     if vals:
-                        selected_list.append({
-                            "table": f["table"],
-                            "col": f["col"],
-                            "values": list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
-                        })
+                        selected_list.append(
+                            {
+                                "table": f["table"],
+                                "col": f["col"],
+                                "values": list(vals)
+                                if isinstance(vals, (list, tuple))
+                                else [str(vals)],
+                            }
+                        )
 
             out[pretty] = selected_list
 
         return out
-
 
     @output
     @render.ui
@@ -543,29 +680,119 @@ def escenarios_server(input, output, session):
             )
 
         panels = []
-        
+
+        # Obtener el rango SELECCIONADO del target para mostrarlo en las exógenas
+        target_var = target_var_rv.get()
+        target_start, target_end = target_selected_range()
+        target_meta = cache.get_meta(target_var) if target_var else {}
+        target_temporality = target_meta.get("temporalidad")
+
+        # Si no hay selección, usar el rango completo disponible solo para mostrar
+        display_start = (
+            target_start
+            if target_start
+            else (cache.get_date_range(target_var)[0] if target_var else None)
+        )
+        display_end = (
+            target_end
+            if target_end
+            else (cache.get_date_range(target_var)[1] if target_var else None)
+        )
+
+        # Formatear las fechas según la temporalidad
+        target_start_fmt = (
+            _fmt_date_temp(display_start, target_temporality) if display_start else "—"
+        )
+        target_end_fmt = (
+            _fmt_date_temp(display_end, target_temporality) if display_end else "—"
+        )
+
+        # Mensaje sobre si está usando selección del usuario o rango completo
+        range_status = (
+            "seleccionado"
+            if target_start
+            else "disponible (selecciona un rango en la variable objetivo)"
+        )
         for item in vars_sel:
-            pretty = item["pretty"]   
+            pretty = item["pretty"]
             table = item["table"]
+            is_target = item["is_target"]
 
             filtros = cache.get_filters(table)
-            
-        
+
             start_date, end_date = cache.get_date_range(pretty)
 
             if not filtros:
-                body = ui.p("Sin filtros no temporales configurados en tbl_admin_filtros para esta variable/tabla.")
+                if is_target:
+                    body = ui.p(
+                        "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
+                    )
+                else:
+                    # Exógena sin filtros: mostrar mensaje sobre el rango del target
+                    body = ui.div(
+                        ui.tags.div(
+                            ui.tags.span(
+                                "📌 Variable Exógena",
+                                style="font-weight:600; color:#6e7781;",
+                            ),
+                            style="margin-bottom:12px;",
+                        ),
+                        ui.tags.div(
+                            "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;",
+                        ),
+                        ui.tags.div(
+                            ui.tags.span(
+                                f"Rango {range_status}: ",
+                                style="font-weight:500; margin-top:8px; display:inline-block;",
+                            ),
+                            ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
+                            style="margin-top:8px;",
+                        ),
+                    )
             else:
                 controls = []
-                
+
+                # Solo mostrar el calendar filter si ES el target
+                if is_target:
+                    calendar = create_calendar_filter(
+                        filtros, cache, stable_id, start_date, end_date, input
+                    )
+                    if calendar:
+                        controls.append(calendar)
+                else:
+                    # Para las exógenas, mostrar mensaje informativo
+                    controls.append(
+                        ui.tags.div(
+                            ui.tags.div(
+                                ui.tags.span(
+                                    "📌 Variable Exógena",
+                                    style="font-weight:600; color:#6e7781;",
+                                ),
+                                style="margin-bottom:12px;",
+                            ),
+                            ui.tags.div(
+                                "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;",
+                            ),
+                            ui.tags.div(
+                                ui.tags.span(
+                                    f"Rango {range_status}: ", style="font-weight:500;"
+                                ),
+                                ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
+                                style="margin-bottom:16px;",
+                            ),
+                            style="margin-bottom:16px;",
+                        )
+                    )
                 for f in filtros:
                     col_lower = f["col"].lower().strip()
                     if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                        continue  
-                    
+                        continue
+
                     t = f["table"]
                     col = f["col"]
-                    label = f.get("label") or col  
+                    label = f.get("label") or col
 
                     cols_set = cache.get_table_cols("IA", t)
                     if col not in cols_set:
@@ -600,7 +827,9 @@ def escenarios_server(input, output, session):
                         )
                     )
 
-                body = ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
+                body = (
+                    ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
+                )
 
             panels.append(
                 ui.accordion_panel(
@@ -613,14 +842,20 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 3: configurar filtros"),
-            ui.p("Para cada variable, se muestran solo filtros no temporales. La temporalidad usa todo el histórico por defecto."),
+            ui.tags.ul(
+                ui.tags.li("Para cada variable se muestran sus filtros configurados."),
+                ui.tags.li(
+                    "En exógenas, el rango temporal se ajusta automáticamente al rango elegido en la variable objetivo."
+                ),
+            ),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
                 style="margin-top: 12px; display: flex; gap: 8px;",
-        ),
-    )
+            ),
+        )
+
     @reactive.Effect
     @reactive.event(input.btn_prev_3)
     def _go_step_2():
@@ -630,7 +865,6 @@ def escenarios_server(input, output, session):
     @reactive.event(input.btn_next_3)
     def _go_step_4():
         current_step.set(4)
-
 
     # =====================================================================
     # Panel 4: Escenarios FUTUROS (exógenas inventadas por el usuario)
@@ -655,7 +889,9 @@ def escenarios_server(input, output, session):
         if not target:
             return pd.DatetimeIndex([])
 
-        _s, end = cache.get_date_range(target)
+        _s, end = target_selected_range()
+        if end is None:
+            _s, end = cache.get_date_range(target)
         if end is None:
             return pd.DatetimeIndex([])
 
@@ -670,7 +906,9 @@ def escenarios_server(input, output, session):
         start = (end_dt + pd.Timedelta(days=1)).normalize()
         return pd.date_range(start=start, periods=horizon, freq="D")
 
-    def _parse_forecast_response(resp: dict):
+    def _parse_forecast_response(
+        resp: dict, fallback_index: pd.DatetimeIndex | None = None
+    ):
         df = pd.DataFrame(resp.get("df") or [])
         if df.empty:
             return None
@@ -679,12 +917,38 @@ def escenarios_server(input, output, session):
         n_obs = int(resp["n_obs"])
         h = int(resp["horizon"])
 
-        future = df.iloc[n_obs : n_obs + h]
-        pred_vals = resp["y_forecast"]
-        pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
+        future = df.iloc[n_obs : n_obs + h].copy()
+        pred_vals = list(resp.get("y_forecast") or [])
+
+        future_dates = None
+        if {"anio", "mes", "dia"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=future["dia"]),
+                errors="coerce",
+            )
+        elif {"anio", "mes"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=1), errors="coerce"
+            )
+
+        if len(pred_vals) != len(future):
+            if fallback_index is not None and len(fallback_index) == len(pred_vals):
+                future = pd.DataFrame({"__dt": fallback_index})
+                future_dates = pd.to_datetime(fallback_index, errors="coerce")
+            else:
+                m = min(len(pred_vals), len(future))
+                pred_vals = pred_vals[:m]
+                future = future.iloc[:m].copy()
+                if future_dates is not None:
+                    future_dates = pd.to_datetime(future_dates, errors="coerce")[:m]
+
+        pred_index = future_dates if future_dates is not None else future.index
+        pred_series = pd.Series(pred_vals, index=pred_index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 
-    def _build_pred_df(future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y") -> pd.DataFrame:
+    def _build_pred_df(
+        future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y"
+    ) -> pd.DataFrame:
         # igual que tu módulo de predicciones
         if {"anio", "mes"}.issubset(future.columns):
             if "dia" in future.columns:
@@ -701,7 +965,9 @@ def escenarios_server(input, output, session):
             fechas = future.index
 
         pred_df = pd.DataFrame({"Fecha": fechas, "Predicción": pred_vals})
-        pred_df["Fecha"] = pd.to_datetime(pred_df["Fecha"], errors="coerce").dt.strftime(date_fmt)
+        pred_df["Fecha"] = pd.to_datetime(
+            pred_df["Fecha"], errors="coerce"
+        ).dt.strftime(date_fmt)
         return pred_df
 
     # ------------------------
@@ -763,7 +1029,6 @@ def escenarios_server(input, output, session):
             repr(selected_filters_by_var()),
         )
 
-
     # ------------------------
     # UI: tabla editable (2)
     # ------------------------
@@ -792,12 +1057,17 @@ def escenarios_server(input, output, session):
                 style="color:#6b7280;",
             )
 
-        header_cells = [ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")]
+        header_cells = [
+            ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
+        ]
         for k in range(1, h + 1):
             header_cells.append(
                 ui.tags.th(
                     ui.tags.div(f"P{k}", style="font-weight:700;"),
-                    ui.tags.div(_dt_label(idx[k-1], temp), style="font-size:12px; color:#6b7280; margin-top:2px;"),
+                    ui.tags.div(
+                        _dt_label(idx[k - 1], temp),
+                        style="font-size:12px; color:#6b7280; margin-top:2px;",
+                    ),
                 )
             )
 
@@ -813,7 +1083,9 @@ def escenarios_server(input, output, session):
                 cid = _cell_id(ex, k)
                 cells.append(
                     ui.tags.td(
-                        ui.input_numeric(cid, label="", value=None, step=0.01),  # ✅ sin ns()
+                        ui.input_numeric(
+                            cid, label="", value=None, step=0.01
+                        ),  # ✅ sin ns()
                         style="min-width:120px;",
                     )
                 )
@@ -891,7 +1163,9 @@ def escenarios_server(input, output, session):
             for j, dt in enumerate(idx):
                 date_str = pd.to_datetime(dt).strftime("%Y-%m-%d")
                 for ex in exogs:
-                    future_values.append({"var": ex, "date": date_str, "value": float(mat[ex][j])})
+                    future_values.append(
+                        {"var": ex, "date": date_str, "value": float(mat[ex][j])}
+                    )
 
             runner = MODEL_RUNNERS.get(model)
             if runner is None:
@@ -915,11 +1189,13 @@ def escenarios_server(input, output, session):
             if model == "sarimax":
                 payload.update({"s": 12})
             elif model == "xgboost":
-                payload.update({"use_target_lags": True, "max_lag": 12, "recursive_forecast": True})
+                payload.update(
+                    {"use_target_lags": True, "max_lag": 12, "recursive_forecast": True}
+                )
 
             resp = runner(payload)
 
-            parsed = _parse_forecast_response(resp)
+            parsed = _parse_forecast_response(resp, fallback_index=idx)
             if parsed is None:
                 scenario_err_rv.set("El backend devolvió df vacío (resp['df']).")
                 last_sig_rv.set(fut_signature())
@@ -930,7 +1206,11 @@ def escenarios_server(input, output, session):
             fig = plot_predictions(
                 df=df,
                 pred=pred_series,
-                title=("Escenario futuro (SARIMAX)" if model == "sarimax" else "Escenario futuro (XGBoost)"),
+                title=(
+                    "Escenario futuro (SARIMAX)"
+                    if model == "sarimax"
+                    else "Escenario futuro (XGBoost)"
+                ),
                 ylabel="Valores",
                 xlabel="Fecha",
                 column_y=y_col,
@@ -940,11 +1220,13 @@ def escenarios_server(input, output, session):
 
             pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
 
-            scenario_res_rv.set({
-                "model": model,
-                "fig": fig,
-                "pred_df": pred_df,
-            })
+            scenario_res_rv.set(
+                {
+                    "model": model,
+                    "fig": fig,
+                    "pred_df": pred_df,
+                }
+            )
             scenario_err_rv.set(None)
             last_sig_rv.set(fut_signature())
 
@@ -1018,7 +1300,9 @@ def escenarios_server(input, output, session):
                 style="display:flex; justify-content:center;",
             ),
             ui.tags.div(
-                ui.input_action_button("esc_fut_calc", "Calcular", class_="btn-primary"),
+                ui.input_action_button(
+                    "esc_fut_calc", "Calcular", class_="btn-primary"
+                ),
                 style="margin-top:10px; display:flex; justify-content:center;",
             ),
             style="padding:14px; border-radius:14px; margin-top:12px;",
@@ -1037,7 +1321,9 @@ def escenarios_server(input, output, session):
         elif res is None:
             status = ui.tags.div(
                 ui.tags.b("Estado: "),
-                ui.tags.span("rellena la tabla y pulsa «Calcular».", style="color:#6b7280;"),
+                ui.tags.span(
+                    "rellena la tabla y pulsa «Calcular».", style="color:#6b7280;"
+                ),
                 style=(
                     "margin-top:10px; padding:10px 12px; border:1px dashed #d1d5db; "
                     "border-radius:12px; background:#fafafa;"
@@ -1096,7 +1382,9 @@ def escenarios_server(input, output, session):
             PANEL_STYLES,
             ui.card(
                 ui.tags.div(
-                    ui.tags.div("\U0001f6a7", style="font-size:3rem; margin-bottom:12px;"),
+                    ui.tags.div(
+                        "\U0001f6a7", style="font-size:3rem; margin-bottom:12px;"
+                    ),
                     ui.h3("Escenarios Pasados", style="margin:0 0 8px 0;"),
                     ui.tags.p(
                         "Este módulo está en desarrollo. Aquí podrás modificar valores "
@@ -1117,4 +1405,4 @@ def escenarios_server(input, output, session):
     @reactive.event(input.esc_prev_pasado)
     def _go_step_0_from_pasado():
         scenario_type_rv.set(None)
-        current_step.set(0)        
+        current_step.set(0)
