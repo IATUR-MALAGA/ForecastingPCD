@@ -27,7 +27,14 @@ router = APIRouter(
 class FilterSelection(BaseModel):
     table: str
     col: str
-    values: list[str]
+    values: list[str] = Field(default_factory=list)
+    # Campos extra para filtros de tipo date_range
+    kind: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    year_col: Optional[str] = None
+    month_col: Optional[str] = None
+    day_col: Optional[str] = None
 
 
 class ScenarioOverride(BaseModel):
