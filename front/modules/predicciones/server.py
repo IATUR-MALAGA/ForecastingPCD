@@ -975,10 +975,8 @@ def predicciones_server(input, output, session):
         model = selected_model()
         exogs = tuple(exog_selected() or [])
         target = target_var_rv.get()
-        if not target:
-            return None
-        horizon = pred_horizon()
         filters = selected_filters_by_var()
+        horizon = pred_horizon()
         return (model, target, exogs, repr(filters), horizon)
 
     @reactive.effect
@@ -1013,10 +1011,6 @@ def predicciones_server(input, output, session):
         model = selected_model()
         predictors_used = exog_selected()
         target = target_var_rv.get()
-        if not target:
-            pred_results_rv.set(None)
-            last_sig_rv.set(pred_signature())
-            return
         filters = selected_filters_by_var()
 
         runner = MODEL_RUNNERS.get(model)
