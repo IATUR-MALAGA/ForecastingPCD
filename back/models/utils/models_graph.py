@@ -1,9 +1,24 @@
 from collections import OrderedDict
 
+import matplotlib
+
+# Evita backend interactivo (Tk) que puede fallar en renderizaciones web/redimensionados.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
 from back.config import settings
+
+plt.rcParams.update(
+    {
+        "font.size": 12,
+        "axes.titlesize": 16,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "legend.fontsize": 11,
+    }
+)
 
 
 def plot_predictions(
@@ -21,7 +36,9 @@ def plot_predictions(
     if not isinstance(df.index, pd.DatetimeIndex):
         if {"anio", "mes"}.issubset(df.columns):
             if "dia" in df.columns:
-                idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=df["dia"]))
+                idx = pd.to_datetime(
+                    dict(year=df["anio"], month=df["mes"], day=df["dia"])
+                )
             else:
                 idx = pd.to_datetime(dict(year=df["anio"], month=df["mes"], day=1))
             df = df.set_index(idx).sort_index()
@@ -33,9 +50,11 @@ def plot_predictions(
     train = df.iloc[:-periodos_a_predecir]
 
     if not isinstance(pred.index, pd.DatetimeIndex):
-        pred = pd.Series(pred.values, index=df.index[-len(pred):], name=getattr(pred, "name", None))
+        pred = pd.Series(
+            pred.values, index=df.index[-len(pred) :], name=getattr(pred, "name", None)
+        )
 
-    figsize = tuple(settings.get("plots.predictions.figsize", [12, 4]))
+    figsize = tuple(settings.get("plots.predictions.figsize", [12, 5]))
     scatter_size = int(settings.get("plots.predictions.scatter_size_single_point", 30))
     scatter_color = settings.get("plots.predictions.prediction_scatter_color", "red")
 
@@ -43,7 +62,14 @@ def plot_predictions(
     train[column_y].plot(ax=ax, label="Train")
 
     if len(pred) == 1:
-        ax.scatter(pred.index, pred.values, label="Prediction", zorder=5, s=scatter_size, color=scatter_color)
+        ax.scatter(
+            pred.index,
+            pred.values,
+            label="Prediction",
+            zorder=5,
+            s=scatter_size,
+            color=scatter_color,
+        )
     else:
         pred.plot(ax=ax, label="Prediction")
 
@@ -54,7 +80,9 @@ def plot_predictions(
         dt_min, dt_max = df.index.min(), df.index.max()
         step = df.index.to_series().diff().median()
         if pd.isna(step) or step <= pd.Timedelta(0):
-            fallback_days = int(settings.get("plots.predictions.fallback_step_days", 30))
+            fallback_days = int(
+                settings.get("plots.predictions.fallback_step_days", 30)
+            )
             step = pd.Timedelta(days=fallback_days)
         padding_steps = int(settings.get("plots.predictions.x_axis_padding_steps", 2))
         pad = step * padding_steps
@@ -79,5 +107,6 @@ def plot_predictions(
             uniq[l] = h
     ax.legend(uniq.values(), uniq.keys(), loc="best")
 
-    fig.tight_layout()
+    fig.tight_layout(pad=1.2)
+    fig.subplots_adjust(left=0.15)
     return fig

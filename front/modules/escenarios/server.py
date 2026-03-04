@@ -1,3 +1,4 @@
+import tempfile
 import pandas as pd
 from shiny import module, reactive, render, ui
 import httpx
@@ -1089,7 +1090,9 @@ def escenarios_server(input, output, session):
         if not exogs:
             return ui.tags.div(
                 ui.tags.b("No hay exógenas activas."),
-                ui.tags.span(" Marca al menos una exógena en el selector para continuar."),
+                ui.tags.span(
+                    " Marca al menos una exógena en el selector para continuar."
+                ),
                 style="color:#6b7280;",
             )
 
@@ -1282,10 +1285,20 @@ def escenarios_server(input, output, session):
     # Outputs
     # ------------------------
     @output
-    @render.plot
+    @render.image(delete_file=True)
     def esc_fut_plot():
         res = scenario_res_rv.get()
-        return None if not res else res["fig"]
+        if not res:
+            return {"src": "", "alt": "Sin resultados"}
+
+        fig = res["fig"]
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            fig.savefig(tmp.name, dpi=100)
+            return {
+                "src": tmp.name,
+                "alt": "Escenario futuro",
+                "style": "width:100%; height:auto; display:block;",
+            }
 
     @output
     @render.data_frame
@@ -1378,7 +1391,7 @@ def escenarios_server(input, output, session):
             outputs = ui.tags.div(
                 ui.card(
                     ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                    ui.output_plot("esc_fut_plot", width="100%", height="420px"),
+                    ui.output_image("esc_fut_plot"),
                     style="padding:12px; border-radius:14px; flex:2 1 640px; min-width:520px;",
                 ),
                 ui.card(
