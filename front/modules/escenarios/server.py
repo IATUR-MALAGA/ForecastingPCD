@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import pandas as pd
 from shiny import module, reactive, render, ui
@@ -45,8 +46,11 @@ def escenarios_server(input, output, session):
     scenario_res_rv = reactive.Value(None)  # resultado de escenario (pasado/futuro)
     last_sig_rv = reactive.Value(None)  # firma usada para invalidación de resultados
     saved_filter_values_rv = reactive.Value({})  # filtros guardados del panel 3
-    saved_horizon_rv = reactive.Value(2)           # horizonte guardado del panel 4
-    saved_fut_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados
+    saved_horizon_rv = reactive.Value(2)  # horizonte guardado del panel 4
+    saved_fut_cell_values_rv = reactive.Value(
+        {}
+    )  # valores de celdas exógenas guardados
+    _SPINNER_ID = "_esc_spinner"
 
     # ---------------------------------------------------------------------
     # Static data / cache
@@ -445,9 +449,7 @@ def escenarios_server(input, output, session):
                 badge = ui.tags.span(
                     "Compatible" if ok else "No compatible",
                     class_=(
-                        "compat-badge compat-yes"
-                        if ok
-                        else "compat-badge compat-no"
+                        "compat-badge compat-yes" if ok else "compat-badge compat-no"
                     ),
                 )
 
@@ -465,7 +467,6 @@ def escenarios_server(input, output, session):
                 fuente = _fmt(meta.get("fuente"))
                 descripcion = _fmt(meta.get("descripcion"))
 
-
                 selector = (
                     ui.input_checkbox(var_id, name, value=(name in selected_set))
                     if ok
@@ -473,7 +474,7 @@ def escenarios_server(input, output, session):
                 )
 
                 blocks.append(
-                     ui.tags.div(
+                    ui.tags.div(
                         ui.tags.div(
                             selector,
                             badge,
@@ -519,7 +520,6 @@ def escenarios_server(input, output, session):
                         class_="var-item",
                     )
                 )
-
 
             panels.append(ui.accordion_panel(cat, ui.div(*blocks), value=_slug(cat)))
 
@@ -597,7 +597,6 @@ def escenarios_server(input, output, session):
             except Exception:
                 extend_steps = 0
 
-        
         target_temporal_filters = []
 
         for item in vars_to_config():
@@ -610,7 +609,6 @@ def escenarios_server(input, output, session):
 
             temp = detect_temporal_filters(filtros)
 
-            
             if is_target and (temp["mes"] or temp["dia"]):
                 start_def, end_def = target_selected_range()
                 if start_def and end_def:
@@ -619,7 +617,7 @@ def escenarios_server(input, output, session):
                         date_range, filtros, table
                     )
                     selected_list.extend(temporal_filters)
-                    
+
                     target_temporal_filters = temporal_filters
 
             elif is_target and temp["anio"]:
@@ -635,12 +633,10 @@ def escenarios_server(input, output, session):
                             "values": [str(y) for y in years],
                         }
                         selected_list.append(temporal_filter)
-                       
+
                         target_temporal_filters = [temporal_filter]
 
-            
             if not is_target and target_temporal_filters:
-               
                 for tf in target_temporal_filters:
                     if (
                         tf.get("kind") == "date_range"
@@ -662,13 +658,12 @@ def escenarios_server(input, output, session):
                     else:
                         selected_list.append(
                             {
-                                "table": table,  
+                                "table": table,
                                 "col": tf["col"],
                                 "values": tf["values"],
                             }
                         )
 
-            
             for f in filtros:
                 col_lower = f["col"].lower().strip()
                 if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
@@ -713,7 +708,6 @@ def escenarios_server(input, output, session):
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
-       
         display_start = (
             target_start
             if target_start
@@ -725,7 +719,6 @@ def escenarios_server(input, output, session):
             else (cache.get_date_range(target_var)[1] if target_var else None)
         )
 
-        
         target_start_fmt = (
             _fmt_date_temp(display_start, target_temporality) if display_start else "—"
         )
@@ -733,12 +726,7 @@ def escenarios_server(input, output, session):
             _fmt_date_temp(display_end, target_temporality) if display_end else "—"
         )
 
-        
-        range_status = (
-            "disponible"
-            if target_start
-            else "disponible"
-        )
+        range_status = "disponible" if target_start else "disponible"
         for item in vars_sel:
             pretty = item["pretty"]
             table = item["table"]
@@ -754,7 +742,6 @@ def escenarios_server(input, output, session):
                         "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
                     )
                 else:
-                    
                     body = ui.div(
                         ui.tags.div(
                             ui.tags.span(
@@ -885,7 +872,6 @@ def escenarios_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        
         saved = {}
         for item in vars_to_config():
             t = item["table"]
@@ -898,7 +884,11 @@ def escenarios_server(input, output, session):
                 if input_id in input:
                     vals = input[input_id]()
                     if vals:
-                        saved[input_id] = list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+                        saved[input_id] = (
+                            list(vals)
+                            if isinstance(vals, (list, tuple))
+                            else [str(vals)]
+                        )
         saved_filter_values_rv.set(saved)
         current_step.set(4)
 
@@ -985,7 +975,6 @@ def escenarios_server(input, output, session):
     def _build_pred_df(
         future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y"
     ) -> pd.DataFrame:
-        
         if {"anio", "mes"}.issubset(future.columns):
             if "dia" in future.columns:
                 fechas = pd.to_datetime(
@@ -1079,7 +1068,6 @@ def escenarios_server(input, output, session):
             repr(selected_filters_by_var()),
         )
 
-    
     @reactive.Effect
     def _save_horizon():
         if current_step.get() != 4:
@@ -1091,16 +1079,15 @@ def escenarios_server(input, output, session):
         except Exception:
             pass
 
-  
     @reactive.Effect
     def _save_cells_before_exog_toggle():
         if current_step.get() != 4:
             return
-      
+
         if "esc_fut_active_exogs" not in input:
             return
         _ = input.esc_fut_active_exogs()
-        
+
         with reactive.isolate():
             exogs = list(fut_exogs())
             h = int(fut_horizon())
@@ -1231,13 +1218,12 @@ def escenarios_server(input, output, session):
     # ------------------------
     @reactive.Effect
     @reactive.event(input.esc_fut_calc)
-    def _compute_future_scenario_on_click():
+    async def _compute_future_scenario_on_click():
         if current_step.get() != 4:
             return
         if int(input.esc_fut_calc() or 0) == 0:
             return
 
-        
         _exogs_snap = fut_exogs()
         _h_snap = fut_horizon()
         _saved_snap = dict(saved_fut_cell_values_rv.get())
@@ -1251,122 +1237,130 @@ def escenarios_server(input, output, session):
         saved_fut_cell_values_rv.set(_saved_snap)
         # ─────────────────────────────────────────────────────────────────────
 
-       
-        try:
-            n_clicks = int(input.esc_fut_calc() or 0)
-        except Exception:
-            n_clicks = -1
-
-        scenario_err_rv.set(f"Calculando… (click={n_clicks})")
+        scenario_err_rv.set(None)
         scenario_res_rv.set(None)
 
-        try:
-            target = target_var_rv.get()
-            exogs = fut_active_exogs()
-            h = fut_horizon()
-            model = fut_model()
-            filters = selected_filters_by_var()
+        # Leer valores reactivos en el hilo principal
+        target = target_var_rv.get()
+        exogs = fut_active_exogs()
+        h = fut_horizon()
+        model = fut_model()
+        filters = selected_filters_by_var()
+        sig = fut_signature()
 
-            if not target:
-                scenario_err_rv.set("No hay variable objetivo seleccionada.")
-                last_sig_rv.set(fut_signature())
-                return
+        if not target:
+            scenario_err_rv.set("No hay variable objetivo seleccionada.")
+            last_sig_rv.set(sig)
+            return
 
-            if not exogs:
-                scenario_err_rv.set("No hay exógenas activas en el Panel 4.")
-                last_sig_rv.set(fut_signature())
-                return
+        if not exogs:
+            scenario_err_rv.set("No hay exógenas activas en el Panel 4.")
+            last_sig_rv.set(sig)
+            return
 
-            idx = fut_future_index()
-            if idx.empty or len(idx) != h:
-                scenario_err_rv.set("No pude construir el índice temporal futuro.")
-                last_sig_rv.set(fut_signature())
-                return
+        idx = fut_future_index()
+        if idx.empty or len(idx) != h:
+            scenario_err_rv.set("No pude construir el índice temporal futuro.")
+            last_sig_rv.set(sig)
+            return
 
-            mat = fut_matrix_values()
+        mat = fut_matrix_values()
 
+        for ex in exogs:
+            for k, v in enumerate(mat.get(ex, []), start=1):
+                if v is None:
+                    scenario_err_rv.set(f"Falta valor para '{ex}' en P{k}.")
+                    last_sig_rv.set(sig)
+                    return
+
+        future_values = []
+        for j, dt in enumerate(idx):
+            date_str = pd.to_datetime(dt).strftime("%Y-%m-%d")
             for ex in exogs:
-                for k, v in enumerate(mat.get(ex, []), start=1):
-                    if v is None:
-                        scenario_err_rv.set(f"Falta valor para '{ex}' en P{k}.")
-                        last_sig_rv.set(fut_signature())
-                        return
-
-            future_values = []
-            for j, dt in enumerate(idx):
-                date_str = pd.to_datetime(dt).strftime("%Y-%m-%d")
-                for ex in exogs:
-                    future_values.append(
-                        {"var": ex, "date": date_str, "value": float(mat[ex][j])}
-                    )
-
-            runner = MODEL_RUNNERS.get(model)
-            if runner is None:
-                scenario_err_rv.set(f"Modelo no soportado: {model}")
-                last_sig_rv.set(fut_signature())
-                return
-
-            payload = {
-                "target_var": target,
-                "predictors": list(exogs),
-                "filters_by_var": filters,
-                "train_ratio": 0.70,
-                "auto_params": True,
-                "return_df": True,
-                "horizon": int(h),
-                "scenario_mode": "future",
-                "scenario_future_values": future_values,
-                "scenario_overrides": [],
-            }
-
-            if model == "sarimax":
-                payload.update({"s": 12})
-            elif model == "xgboost":
-                payload.update(
-                    {"use_target_lags": True, "max_lag": 12, "recursive_forecast": True}
+                future_values.append(
+                    {"var": ex, "date": date_str, "value": float(mat[ex][j])}
                 )
 
-            resp = runner(payload)
+        runner = MODEL_RUNNERS.get(model)
+        if runner is None:
+            scenario_err_rv.set(f"Modelo no soportado: {model}")
+            last_sig_rv.set(sig)
+            return
 
-            parsed = _parse_forecast_response(resp, fallback_index=idx)
-            if parsed is None:
+        payload = {
+            "target_var": target,
+            "predictors": list(exogs),
+            "filters_by_var": filters,
+            "train_ratio": 0.70,
+            "auto_params": True,
+            "return_df": True,
+            "horizon": int(h),
+            "scenario_mode": "future",
+            "scenario_future_values": future_values,
+            "scenario_overrides": [],
+        }
+
+        if model == "sarimax":
+            payload.update({"s": 12})
+        elif model == "xgboost":
+            payload.update(
+                {"use_target_lags": True, "max_lag": 12, "recursive_forecast": True}
+            )
+
+        # Insertar spinner (bypass flush, se envía inmediatamente al browser)
+        _spinner_id = _SPINNER_ID
+        ui.insert_ui(
+            ui.tags.div(
+                ui.tags.div(class_="graph-spinner"),
+                ui.tags.div("Calculando escenario...", class_="graph-loading-text"),
+                class_="graph-loading-container",
+                id=_spinner_id,
+            ),
+            selector="#esc_result_area",
+            where="afterBegin",
+            immediate=True,
+        )
+
+        try:
+
+            def _run_scenario():
+                resp = runner(payload)
+                parsed = _parse_forecast_response(resp, fallback_index=idx)
+                if parsed is None:
+                    return None
+                df, y_col, future, h2, pred_vals, pred_series = parsed
+                fig = plot_predictions(
+                    df=df,
+                    pred=pred_series,
+                    title=(
+                        "Escenario futuro (SARIMAX)"
+                        if model == "sarimax"
+                        else "Escenario futuro (XGBoost)"
+                    ),
+                    ylabel="Valores",
+                    xlabel="Fecha",
+                    column_y=y_col,
+                    periodos_a_predecir=h2,
+                    holidays_col=None,
+                )
+                pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
+                return {"model": model, "fig": fig, "pred_df": pred_df}
+
+            result = await asyncio.to_thread(_run_scenario)
+
+            if result is None:
                 scenario_err_rv.set("El backend devolvió df vacío (resp['df']).")
-                last_sig_rv.set(fut_signature())
-                return
-
-            df, y_col, future, h2, pred_vals, pred_series = parsed
-
-            fig = plot_predictions(
-                df=df,
-                pred=pred_series,
-                title=(
-                    "Escenario futuro (SARIMAX)"
-                    if model == "sarimax"
-                    else "Escenario futuro (XGBoost)"
-                ),
-                ylabel="Valores",
-                xlabel="Fecha",
-                column_y=y_col,
-                periodos_a_predecir=h2,
-                holidays_col=None,
-            )
-
-            pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
-
-            scenario_res_rv.set(
-                {
-                    "model": model,
-                    "fig": fig,
-                    "pred_df": pred_df,
-                }
-            )
-            scenario_err_rv.set(None)
-            last_sig_rv.set(fut_signature())
+            else:
+                scenario_res_rv.set(result)
+                scenario_err_rv.set(None)
+            last_sig_rv.set(sig)
 
         except Exception as e:
             scenario_err_rv.set(f"Fallo al calcular: {type(e).__name__}: {e}")
-            last_sig_rv.set(fut_signature())
+            last_sig_rv.set(sig)
             return
+        finally:
+            ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
 
     # ------------------------
     # Outputs
@@ -1506,15 +1500,17 @@ def escenarios_server(input, output, session):
             ui.output_ui("esc_future_exog_selector"),
             ui.output_ui("esc_future_exog_table"),
             model_box,
-            status,
-            outputs,
+            ui.tags.div(
+                status,
+                outputs,
+                id="esc_result_area",
+            ),
             footer,
         )
 
     @reactive.Effect
     @reactive.event(input.esc_prev_4)
     def _go_step_3_from_4():
-        
         scenario_res_rv.set(None)
         scenario_err_rv.set(None)
         saved_horizon_rv.set(2)
