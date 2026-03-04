@@ -46,6 +46,7 @@ def escenarios_server(input, output, session):
     saved_filter_values_rv = reactive.Value({})  # filtros guardados del panel 3
     saved_horizon_rv = reactive.Value(2)           # horizonte guardado del panel 4
     saved_fut_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados
+    fut_gen_rv = reactive.Value(0)                 # generación de inputs de celdas (cambia al entrar al panel 4)
 
     # ---------------------------------------------------------------------
     # Static data / cache
@@ -827,7 +828,7 @@ def escenarios_server(input, output, session):
                         continue
 
                     input_id = stable_id("flt", f"{t}__{col}")
-                    choices = cache.get_distinct("IA", t, col)
+                    choices = cache.get_distinct_complete("IA", t, col)
                     _saved_val = saved_filter_values_rv.get().get(input_id, [])
 
                     controls.append(
@@ -884,7 +885,7 @@ def escenarios_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        
+       
         saved = {}
         for item in vars_to_config():
             t = item["table"]
@@ -899,6 +900,12 @@ def escenarios_server(input, output, session):
                     if vals:
                         saved[input_id] = list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
         saved_filter_values_rv.set(saved)
+       
+        saved_horizon_rv.set(2)
+        saved_fut_cell_values_rv.set({})
+        fut_gen_rv.set(fut_gen_rv.get() + 1)  
+        scenario_res_rv.set(None)
+        scenario_err_rv.set(None)
         current_step.set(4)
 
     # =====================================================================
@@ -911,9 +918,9 @@ def escenarios_server(input, output, session):
     # ------------------------
     # Helpers Panel 4 (puros)
     # ------------------------
-    def _cell_id(exog_name: str, k: int) -> str:
-        # id estable por exógena + periodo
-        return stable_id("esc_fut_val", f"{exog_name}__P{k}")
+    def _cell_id(exog_name: str, k: int, gen: int = 0) -> str:
+        # id estable por exógena + periodo + generación (cambia al resetear el panel)
+        return stable_id("esc_fut_val", f"{exog_name}__P{k}__G{gen}")
 
     def _infer_future_index_from_target_end(horizon: int) -> pd.DatetimeIndex:
         """
@@ -1054,11 +1061,12 @@ def escenarios_server(input, output, session):
         """
         exogs = fut_active_exogs()
         h = fut_horizon()
+        gen = fut_gen_rv.get()
         out: dict[str, list[float | None]] = {}
         for ex in exogs:
             row = []
             for k in range(1, h + 1):
-                cid = _cell_id(ex, k)
+                cid = _cell_id(ex, k, gen)
                 v = input[cid]() if cid in input else None
                 row.append(v)
             out[ex] = row
@@ -1103,10 +1111,11 @@ def escenarios_server(input, output, session):
         with reactive.isolate():
             exogs = list(fut_exogs())
             h = int(fut_horizon())
+            gen = fut_gen_rv.get()
             saved = dict(saved_fut_cell_values_rv.get())
         for ex in exogs:
             for k in range(1, h + 1):
-                cid = _cell_id(ex, k)
+                cid = _cell_id(ex, k, gen)
                 if cid in input:
                     v = input[cid]()
                     if v is not None:
@@ -1185,6 +1194,7 @@ def escenarios_server(input, output, session):
             )
 
         _cell_saved = saved_fut_cell_values_rv.get()
+        _gen = fut_gen_rv.get()
 
         body_rows = []
         for ex in exogs:
@@ -1195,7 +1205,7 @@ def escenarios_server(input, output, session):
                 )
             ]
             for k in range(1, h + 1):
-                cid = _cell_id(ex, k)
+                cid = _cell_id(ex, k, _gen)
                 _init_val = _cell_saved.get(cid, None)
                 cells.append(
                     ui.tags.td(
@@ -1237,10 +1247,12 @@ def escenarios_server(input, output, session):
         
         _exogs_snap = fut_exogs()
         _h_snap = fut_horizon()
+        with reactive.isolate():
+            _gen_snap = fut_gen_rv.get()
         _saved_snap = dict(saved_fut_cell_values_rv.get())
         for _ex in _exogs_snap:
             for _k in range(1, _h_snap + 1):
-                _cid = _cell_id(_ex, _k)
+                _cid = _cell_id(_ex, _k, _gen_snap)
                 if _cid in input:
                     _v = input[_cid]()
                     if _v is not None:
@@ -1504,8 +1516,6 @@ def escenarios_server(input, output, session):
         
         scenario_res_rv.set(None)
         scenario_err_rv.set(None)
-        saved_horizon_rv.set(2)
-        saved_fut_cell_values_rv.set({})
         current_step.set(3)
 
     # =====================================================================

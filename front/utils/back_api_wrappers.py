@@ -49,6 +49,10 @@ def get_filters_for_variable(nombre: str) -> List[Dict[str, Any]]:
 def get_distinct_values_for_column(schema: str, table: str, column: str) -> List[str]:
     return _get(f"/api/database/distinct/{_p(schema)}/{_p(table)}/{_p(column)}")
 
+
+def get_distinct_values_complete_range(schema: str, table: str, column: str) -> List[str]:
+    return _get(f"/api/database/distinct-complete/{_p(schema)}/{_p(table)}/{_p(column)}")
+
 def get_table_columns(schema: str, table: str) -> List[Dict[str, Any]]:
     return _get(f"/api/database/schemas/{_p(schema)}/tables/{_p(table)}/columns")
 

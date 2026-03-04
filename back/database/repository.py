@@ -16,6 +16,7 @@ from .queries import (
     GET_FILTERS_FOR_VARIABLE,
     GET_TABLE_NAME_FOR_VARIABLE,
     GET_BOOL_GROUP_FILTERS,
+    MES_NUM_CASE,
 )
 
 
@@ -82,6 +83,7 @@ def get_date_range_for_variable(nombre_tabla: str, schema: str = settings.get("d
         q = GET_DATE_RANGE_FOR_VARIABLE.format(
             schema=sql.Identifier(schema),
             nombre_tabla=sql.Identifier(nombre_tabla),
+            mes_num_case=MES_NUM_CASE,
         )
         return fetch_data(q) or []
     except Exception as e:
@@ -103,6 +105,69 @@ def get_distinct_values_for_column(schema: str, table: str, column: str) -> list
     rows = fetch_data(q) or []
     # rows suele venir como [{"value": "..."}]
     return _as_str_list(rows, key="value")
+
+
+def get_distinct_values_complete_range(schema: str, table: str, column: str) -> list[str]:
+    """
+    Devuelve SOLO los valores de `column` que tienen datos en TODOS los meses
+    del rango global de la tabla (sin huecos). Reutiliza MES_NUM_CASE.
+    """
+    q = sql.SQL("""
+        WITH src AS (
+            SELECT
+                {col}::text                    AS value,
+                anio::int                      AS anio,
+                lower(trim(mes::text))         AS mes_txt
+            FROM {schema}.{table}
+            WHERE {col} IS NOT NULL
+              AND anio IS NOT NULL
+              AND mes  IS NOT NULL
+        ),
+        mes_norm AS (
+            SELECT value,
+                   make_date(anio, {mes_num_case}, 1) AS fecha
+            FROM src
+        ),
+        global_range AS (
+            SELECT MIN(fecha) AS min_f,
+                   MAX(fecha) AS max_f
+            FROM mes_norm
+            WHERE fecha IS NOT NULL
+        ),
+        n_expected AS (
+            SELECT COUNT(*)::int AS n
+            FROM generate_series(
+                (SELECT min_f FROM global_range),
+                (SELECT max_f FROM global_range),
+                '1 month'::interval
+            ) gs
+        ),
+        val_coverage AS (
+            SELECT value,
+                   COUNT(DISTINCT fecha) AS n_actual
+            FROM mes_norm
+            WHERE fecha IS NOT NULL
+            GROUP BY value
+        )
+        SELECT value
+        FROM   val_coverage, n_expected
+        WHERE  val_coverage.n_actual = n_expected.n
+        ORDER BY 1;
+    """).format(
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        col=sql.Identifier(column),
+        mes_num_case=MES_NUM_CASE,
+    )
+    try:
+        rows = fetch_data(q) or []
+        result = _as_str_list(rows, key="value")
+        if not result:
+            return get_distinct_values_for_column(schema, table, column)
+        return result
+    except Exception as e:
+        print(f"[complete_range] fallback para {schema}.{table}.{column}: {e}")
+        return get_distinct_values_for_column(schema, table, column)
 
 def get_all_data(
     schema: str,

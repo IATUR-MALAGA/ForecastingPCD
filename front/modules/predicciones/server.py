@@ -704,7 +704,7 @@ def predicciones_server(input, output, session):
                         continue
 
                     input_id = _stable_id("flt", f"{t}__{col}")
-                    choices = cache.get_distinct("IA", t, col)
+                    choices = cache.get_distinct_complete("IA", t, col)
 
                     _saved_val = saved_filter_values_rv.get().get(input_id, [])
                     controls.append(
