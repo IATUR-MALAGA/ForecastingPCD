@@ -38,6 +38,7 @@ def predicciones_server(input, output, session):
 
     target_var_rv = reactive.Value(None)
     predictors_rv = reactive.Value([])
+    saved_filter_values_rv = reactive.Value({})
 
     catalog_entries = get_names_in_table_catalog() or []
     name_to_table = build_name_to_table(catalog_entries)
@@ -473,7 +474,7 @@ def predicciones_server(input, output, session):
             except Exception:
                 extend_steps = 0
 
-        # Primero capturamos los filtros temporales del target
+        
         target_temporal_filters = []
 
         for item in vars_to_config():
@@ -486,7 +487,6 @@ def predicciones_server(input, output, session):
 
             temp = detect_temporal_filters(filtros)
 
-            # Usar el rango por defecto de la variable objetivo (sin selección manual)
             if is_target and (temp["mes"] or temp["dia"]):
                 start_def, end_def = target_selected_range()
                 if start_def and end_def:
@@ -511,12 +511,10 @@ def predicciones_server(input, output, session):
                             "values": [str(y) for y in years],
                         }
                         selected_list.append(temporal_filter)
-                        # Guardar para aplicar a las exógenas
                         target_temporal_filters = [temporal_filter]
 
-            # Si es exógena, aplicar los filtros temporales del target
             if not is_target and target_temporal_filters:
-                # Adaptar los filtros del target a esta tabla exógena
+
                 for tf in target_temporal_filters:
                     if (
                         tf.get("kind") == "date_range"
@@ -538,13 +536,13 @@ def predicciones_server(input, output, session):
                     else:
                         selected_list.append(
                             {
-                                "table": table,  # Cambiar a la tabla de la exógena
+                                "table": table,  
                                 "col": tf["col"],
                                 "values": tf["values"],
                             }
                         )
 
-            # Capturar filtros no temporales para todas las variables
+            
             for f in filtros:
                 col_lower = f["col"].lower().strip()
                 if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
@@ -584,13 +582,13 @@ def predicciones_server(input, output, session):
 
         panels = []
 
-        # Obtener el rango SELECCIONADO del target para mostrarlo en las exógenas
+       
         target_var = target_var_rv.get()
         target_start, target_end = target_selected_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
-        # Si no hay selección, usar el rango completo disponible solo para mostrar
+        
         display_start = (
             target_start
             if target_start
@@ -602,7 +600,7 @@ def predicciones_server(input, output, session):
             else (cache.get_date_range(target_var)[1] if target_var else None)
         )
 
-        # Formatear las fechas según la temporalidad
+        
         target_start_fmt = (
             _fmt_date_temp(display_start, target_temporality) if display_start else "—"
         )
@@ -610,8 +608,12 @@ def predicciones_server(input, output, session):
             _fmt_date_temp(display_end, target_temporality) if display_end else "—"
         )
 
-        # Mensaje sobre el rango disponible
-        range_status = "disponible" if target_start else "disponible"
+       
+        range_status = (
+            "disponible"
+            if target_start
+            else "disponible"
+        )
 
         for item in vars_sel:
             pretty = item["pretty"]
@@ -628,7 +630,7 @@ def predicciones_server(input, output, session):
                         "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
                     )
                 else:
-                    # Exógena sin filtros: mostrar mensaje sobre el rango del target
+                    
                     body = ui.div(
                         ui.tags.div(
                             ui.tags.span(
@@ -638,7 +640,7 @@ def predicciones_server(input, output, session):
                             style="margin-bottom:12px;",
                         ),
                         ui.tags.div(
-                            "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                            "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
                             style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;",
                         ),
                         ui.tags.div(
@@ -654,7 +656,7 @@ def predicciones_server(input, output, session):
                 controls = []
 
                 if not is_target:
-                    # Para las exógenas, mostrar mensaje informativo
+                    
                     controls.append(
                         ui.tags.div(
                             ui.tags.div(
@@ -665,7 +667,7 @@ def predicciones_server(input, output, session):
                                 style="margin-bottom:12px;",
                             ),
                             ui.tags.div(
-                                "✓ Esta variable se ajustará automáticamente al rango temporal seleccionado en la variable objetivo.",
+                                "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
                                 style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;",
                             ),
                             ui.tags.div(
@@ -705,12 +707,14 @@ def predicciones_server(input, output, session):
                     input_id = _stable_id("flt", f"{t}__{col}")
                     choices = cache.get_distinct("IA", t, col)
 
+                    _saved_val = saved_filter_values_rv.get().get(input_id, [])
                     controls.append(
                         ui.tags.div(
                             ui.input_selectize(
                                 input_id,
                                 label=label,
                                 choices=choices,
+                                selected=_saved_val if _saved_val else [],
                                 multiple=True,
                                 options={
                                     "placeholder": "Selecciona uno o varios valores (vacío = sin filtro)",
@@ -755,6 +759,21 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
+        
+        saved = {}
+        for item in vars_to_config():
+            t = item["table"]
+            filtros = cache.get_filters(t)
+            for f in filtros:
+                col_lower = f["col"].lower().strip()
+                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                    continue
+                input_id = _stable_id("flt", f"{t}__{f['col']}")
+                if input_id in input:
+                    vals = input[input_id]()
+                    if vals:
+                        saved[input_id] = list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+        saved_filter_values_rv.set(saved)
         current_step.set(4)
 
     ##########################################################################################
@@ -811,7 +830,7 @@ def predicciones_server(input, output, session):
     def _build_pred_df(
         future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y"
     ) -> pd.DataFrame:
-        # Repite la lógica de plot_predictions: anio/mes(/dia) -> fechas reales
+        
         if {"anio", "mes"}.issubset(future.columns):
             if "dia" in future.columns:
                 fechas = pd.to_datetime(
@@ -1254,4 +1273,6 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_prev_4)
     def _go_step_3_from_4():
+        # Borrar resultados de predicción al volver al panel 3
+        pred_results_rv.set(None)
         current_step.set(3)
