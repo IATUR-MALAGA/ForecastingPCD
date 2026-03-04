@@ -37,6 +37,7 @@ def predicciones_server(input, output, session):
 
     target_var_rv = reactive.Value(None)
     predictors_rv = reactive.Value([])
+    filters_snapshot_rv = reactive.Value({})
 
     catalog_entries = get_names_in_table_catalog() or []
     name_to_table = build_name_to_table(catalog_entries)
@@ -794,6 +795,9 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
+        # Al ocultar panel 3, los inputs dinámicos pueden desmontarse.
+        # Guardamos snapshot para usar exactamente los filtros seleccionados.
+        filters_snapshot_rv.set(selected_filters_by_var())
         current_step.set(4)
 
     ##########################################################################################
@@ -832,6 +836,42 @@ def predicciones_server(input, output, session):
                 }
             )
         return base
+
+    def _extend_date_range_filters_for_horizon(
+        filters_by_var: dict[str, list[dict]], target_name: str | None, horizon: int
+    ) -> dict[str, list[dict]]:
+        """Extiende filtros date_range de exógenas para cubrir meses/días futuros."""
+        out: dict[str, list[dict]] = {}
+        h = max(0, int(horizon or 0))
+
+        if not target_name:
+            return dict(filters_by_var or {})
+
+        for var_name, flts in (filters_by_var or {}).items():
+            new_flts: list[dict] = []
+            for f in flts or []:
+                f2 = dict(f)
+                if (
+                    h > 0
+                    and var_name != target_name
+                    and (
+                        f2.get("kind") == "date_range"
+                        or f2.get("col") == "__date_range__"
+                    )
+                    and f2.get("end")
+                ):
+                    end_dt = pd.to_datetime(f2.get("end"), errors="coerce")
+                    if pd.notna(end_dt):
+                        if f2.get("day_col"):
+                            end_dt = end_dt + pd.Timedelta(days=h)
+                        elif f2.get("month_col"):
+                            end_dt = end_dt + pd.DateOffset(months=h)
+                        else:
+                            end_dt = end_dt + pd.DateOffset(years=h)
+                        f2["end"] = end_dt.date().isoformat()
+                new_flts.append(f2)
+            out[var_name] = new_flts
+        return out
 
     def _parse_forecast_response(resp: dict):
         df = pd.DataFrame(resp.get("df") or [])
@@ -1014,8 +1054,11 @@ def predicciones_server(input, output, session):
         model = selected_model()
         exogs = tuple(exog_selected() or [])
         target = target_var_rv.get()
-        filters = selected_filters_by_var()
+        if not target:
+            return None
         horizon = pred_horizon()
+        filters = filters_snapshot_rv.get() or selected_filters_by_var()
+        filters = _extend_date_range_filters_for_horizon(filters, target, horizon)
         return (model, target, exogs, repr(filters), horizon)
 
     @reactive.effect
@@ -1050,7 +1093,12 @@ def predicciones_server(input, output, session):
         model = selected_model()
         predictors_used = exog_selected()
         target = target_var_rv.get()
-        filters = selected_filters_by_var()
+        if not target:
+            pred_results_rv.set(None)
+            last_sig_rv.set(pred_signature())
+            return
+        filters = filters_snapshot_rv.get() or selected_filters_by_var()
+        filters = _extend_date_range_filters_for_horizon(filters, target, horizon)
 
         runner = MODEL_RUNNERS.get(model)
         if runner is None:
