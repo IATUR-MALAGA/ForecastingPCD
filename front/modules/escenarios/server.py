@@ -17,6 +17,7 @@ from front.utils.utils import (
     compatibilidad_con_objetivo,
     create_calendar_filter,
     detect_temporal_filters,
+    fmt as _fmt,
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
     panel_styles,
@@ -419,6 +420,7 @@ def escenarios_server(input, output, session):
         ts, te = cache.get_date_range(target) if target else (None, None)
 
         selected_set = set(selected_predictors())
+        target_temp = _fmt(target_meta.get("temporalidad"))
 
         panels = []
         for cat, names in grouped.items():
@@ -437,11 +439,29 @@ def escenarios_server(input, output, session):
                     cache=cache,
                 )
 
-                info_icon = (
-                    ui.tooltip(ui.tags.span(ui.HTML(ICON_SVG_INFO)), reason)
-                    if (not ok and reason)
-                    else None
+                badge = ui.tags.span(
+                    "Compatible" if ok else "No compatible",
+                    class_=(
+                        "compat-badge compat-yes"
+                        if ok
+                        else "compat-badge compat-no"
+                    ),
                 )
+
+                info_icon = None
+                if not ok and reason:
+                    info_icon = ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        reason,
+                    )
+                temporalidad = _fmt(meta.get("temporalidad"))
+                granularidad = _fmt(meta.get("granularidad"))
+                unidad_medida = _fmt(meta.get("unidad_medida"))
+                fuente = _fmt(meta.get("fuente"))
+                descripcion = _fmt(meta.get("descripcion"))
+
 
                 selector = (
                     ui.input_checkbox(var_id, name, value=(name in selected_set))
@@ -450,21 +470,53 @@ def escenarios_server(input, output, session):
                 )
 
                 blocks.append(
-                    ui.div(
-                        selector,
-                        ui.tags.span(
-                            "Compatible" if ok else "No compatible",
-                            class_=(
-                                "compat-badge compat-yes"
-                                if ok
-                                else "compat-badge compat-no"
-                            ),
-                            style="margin-left:8px;",
+                     ui.tags.div(
+                        ui.tags.div(
+                            selector,
+                            badge,
+                            info_icon,
+                            style="display: flex; align-items: baseline; gap: 6px;",
                         ),
-                        info_icon,
+                        ui.tags.details(
+                            ui.tags.summary(
+                                "Ver más",
+                                style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;",
+                            ),
+                            ui.tags.div(
+                                ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                ),
+                                style="margin-top: 8px; padding: 8px 0;",
+                            ),
+                        ),
                         class_="var-item",
                     )
                 )
+
 
             panels.append(ui.accordion_panel(cat, ui.div(*blocks), value=_slug(cat)))
 
@@ -494,39 +546,11 @@ def escenarios_server(input, output, session):
     ##########################################################################################
     @reactive.Calc
     def target_selected_range() -> tuple:
-        """Obtiene el rango temporal seleccionado por el usuario en el target"""
+        """Devuelve el rango completo por defecto de la variable objetivo (sin selección manual)."""
         target = target_var_rv.get()
         if not target:
             return (None, None)
-
-        table = name_to_table.get(target)
-        if not table:
-            rows = get_tableName_for_variable(target) or []
-            table = rows[0].get("nombre_tabla") if rows else target
-
-        filtros = cache.get_filters(table)
-        temp = detect_temporal_filters(filtros)
-
-        # Si tiene mes o día, usar el date_range selector
-        if temp["mes"] or temp["dia"]:
-            date_input_id = stable_id("flt", f"{table}__date_range")
-            if date_input_id in input:
-                date_range = input[date_input_id]()
-                if date_range and len(date_range) == 2:
-                    return (date_range[0], date_range[1])
-
-        # Si tiene año, usar el selector de años
-        elif temp["anio"]:
-            anio_input_id = stable_id("flt", f"{table}__anio")
-            if anio_input_id in input:
-                vals = input[anio_input_id]()
-                if vals:
-                    years = sorted([int(v) for v in vals])
-                    return (f"{years[0]}-01-01", f"{years[-1]}-12-31")
-
-        # Si no hay selección, devolver None en lugar del rango completo
-        # Esto evita sobrescribir la selección del usuario
-        return (None, None)
+        return cache.get_date_range(target)
 
     @reactive.Calc
     def vars_to_config() -> list[dict]:
@@ -583,30 +607,29 @@ def escenarios_server(input, output, session):
 
             temp = detect_temporal_filters(filtros)
 
-            # Solo capturar filtros temporales si ES el target
+            # Usar el rango por defecto de la variable objetivo (sin selección manual)
             if is_target and (temp["mes"] or temp["dia"]):
-                date_input_id = stable_id("flt", f"{table}__date_range")
-                if date_input_id in input:
-                    date_range = input[date_input_id]()
-                    if date_range:
-                        temporal_filters = process_date_range_filters(
-                            date_range, filtros, table
-                        )
-                        selected_list.extend(temporal_filters)
-                        # Guardar para aplicar a las exógenas
-                        target_temporal_filters = temporal_filters
+                start_def, end_def = target_selected_range()
+                if start_def and end_def:
+                    date_range = (start_def, end_def)
+                    temporal_filters = process_date_range_filters(
+                        date_range, filtros, table
+                    )
+                    selected_list.extend(temporal_filters)
+                    # Guardar para aplicar a las exógenas
+                    target_temporal_filters = temporal_filters
 
             elif is_target and temp["anio"]:
-                anio_input_id = stable_id("flt", f"{table}__anio")
-                if anio_input_id in input:
-                    vals = input[anio_input_id]()
-                    if vals:
+                start_def, end_def = target_selected_range()
+                if start_def and end_def:
+                    start_year = pd.to_datetime(start_def, errors="coerce").year
+                    end_year = pd.to_datetime(end_def, errors="coerce").year
+                    if start_year and end_year:
+                        years = list(range(start_year, end_year + 1))
                         temporal_filter = {
                             "table": table,
                             "col": temp["anio"]["col"],
-                            "values": list(vals)
-                            if isinstance(vals, (list, tuple))
-                            else [str(vals)],
+                            "values": [str(y) for y in years],
                         }
                         selected_list.append(temporal_filter)
                         # Guardar para aplicar a las exógenas
@@ -708,11 +731,11 @@ def escenarios_server(input, output, session):
             _fmt_date_temp(display_end, target_temporality) if display_end else "—"
         )
 
-        # Mensaje sobre si está usando selección del usuario o rango completo
+        # Mensaje sobre el rango disponible
         range_status = (
-            "seleccionado"
+            "disponible"
             if target_start
-            else "disponible (selecciona un rango en la variable objetivo)"
+            else "disponible"
         )
         for item in vars_sel:
             pretty = item["pretty"]
@@ -754,14 +777,7 @@ def escenarios_server(input, output, session):
             else:
                 controls = []
 
-                # Solo mostrar el calendar filter si ES el target
-                if is_target:
-                    calendar = create_calendar_filter(
-                        filtros, cache, stable_id, start_date, end_date, input
-                    )
-                    if calendar:
-                        controls.append(calendar)
-                else:
+                if not is_target:
                     # Para las exógenas, mostrar mensaje informativo
                     controls.append(
                         ui.tags.div(
