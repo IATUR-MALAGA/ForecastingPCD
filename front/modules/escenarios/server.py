@@ -158,8 +158,8 @@ def escenarios_server(input, output, session):
     def step_indicator():
         step = current_step.get()
         stype = scenario_type_rv.get()
-        # En paso 0 o modo pasado no mostramos indicador de pasos
-        if step == 0 or stype != "futuro":
+        # En paso 0 no mostramos indicador de pasos
+        if step == 0 or stype not in ("futuro", "pasado"):
             return ui.div()
 
         labels = ["Objetivo", "Predictoras", "Filtros", "Escenarios"]
@@ -295,7 +295,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_1():
-        if current_step.get() != 1 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 1 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         grouped = group_by_category(catalog_entries)
@@ -408,7 +408,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_2():
-        if current_step.get() != 2 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 2 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         target = target_var_rv.get()
@@ -668,7 +668,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_3():
-        if current_step.get() != 3 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 3 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         vars_sel = vars_to_config()
@@ -1419,7 +1419,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_pasado():
-        if scenario_type_rv.get() != "pasado" or current_step.get() < 1:
+        if scenario_type_rv.get() != "pasado" or current_step.get() != 4:
             return ui.div()
 
         return ui.div(
@@ -1429,7 +1429,7 @@ def escenarios_server(input, output, session):
                     ui.tags.div(
                         "\U0001f6a7", style="font-size:3rem; margin-bottom:12px;"
                     ),
-                    ui.h3("Escenarios Pasados", style="margin:0 0 8px 0;"),
+                    ui.h3("Panel 4: Escenarios Pasados", style="margin:0 0 8px 0;"),
                     ui.tags.p(
                         "Este módulo está en desarrollo. Aquí podrás modificar valores "
                         "históricos de las exógenas y observar cómo habría cambiado la predicción.",
@@ -1438,7 +1438,7 @@ def escenarios_server(input, output, session):
                     style="text-align:center; padding:40px 20px;",
                 ),
                 ui.tags.div(
-                    ui.input_action_button("esc_prev_pasado", "← Volver al selector"),
+                    ui.input_action_button("esc_prev_pasado", "← Anterior"),
                     style="display:flex; justify-content:center; padding-bottom:20px;",
                 ),
                 style="border-radius:14px; max-width:600px; margin:24px auto;",
@@ -1447,6 +1447,5 @@ def escenarios_server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.esc_prev_pasado)
-    def _go_step_0_from_pasado():
-        scenario_type_rv.set(None)
-        current_step.set(0)
+    def _go_step_3_from_pasado():
+        current_step.set(3)
