@@ -16,7 +16,7 @@ from front.utils.back_api_wrappers import (
     get_date_range_for_variable,
     get_filters_for_variable,
     get_distinct_values_for_column,
-    get_distinct_values_complete_range,
+    get_distinct_values_for_column,
     get_table_columns,
     get_metadata_for_variable as get_metadata_for_variable_api,
 )
@@ -266,7 +266,7 @@ class PrediccionesCache:
         key = (schema, table, col)
         if key in self._distinct_complete_cache:
             return self._distinct_complete_cache[key]
-        vals = get_distinct_values_complete_range(schema, table, col) or []
+        vals = get_distinct_values_for_column(schema, table, col, complete=True) or []
         self._distinct_complete_cache[key] = vals
         return vals
 
