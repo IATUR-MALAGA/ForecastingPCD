@@ -1,3 +1,4 @@
+import tempfile
 import pandas as pd
 from shiny import ui, reactive, render, module
 from front.utils.back_api_wrappers import sarimax_run
@@ -1069,12 +1070,20 @@ def predicciones_server(input, output, session):
     # Outputs (usa el almacén, no calcula)
     # ------------------------
     @output
-    @render.plot
+    @render.image(delete_file=True)
     def model_plot():
         res = pred_results_rv.get()
         if not res:
-            return None
-        return res["fig"]
+            return {"src": "", "alt": "Sin resultados"}
+
+        fig = res["fig"]
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            fig.savefig(tmp.name, dpi=100)
+            return {
+                "src": tmp.name,
+                "alt": "Predicciones",
+                "style": "width:100%; height:auto; display:block;",
+            }
 
     @output
     @render.data_frame
@@ -1227,7 +1236,7 @@ def predicciones_server(input, output, session):
         body = ui.tags.div(
             ui.card(
                 ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                ui.output_plot("model_plot", width="100%", height="420px"),
+                ui.output_image("model_plot", width="100%", height="auto"),
                 style=(
                     "padding: 12px; border-radius: 14px;"
                     "flex: 2 1 640px; min-width: 520px;"
