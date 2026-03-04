@@ -1391,7 +1391,7 @@ def escenarios_server(input, output, session):
             outputs = ui.tags.div(
                 ui.card(
                     ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                    ui.output_image("esc_fut_plot"),
+                    ui.output_image("esc_fut_plot", width="100%", height="auto"),
                     style="padding:12px; border-radius:14px; flex:2 1 640px; min-width:520px;",
                 ),
                 ui.card(

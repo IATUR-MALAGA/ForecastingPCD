@@ -108,5 +108,5 @@ def plot_predictions(
     ax.legend(uniq.values(), uniq.keys(), loc="best")
 
     fig.tight_layout(pad=1.2)
-    fig.subplots_adjust(left=0.15)
+    fig.subplots_adjust(left=0.12)
     return fig
