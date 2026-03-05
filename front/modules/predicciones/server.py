@@ -284,7 +284,7 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.h3("Panel 2: seleccionar variables predictoras"),
-            ui.p("Seleccione una o varias variables (checkbox)."),
+            ui.p("Seleccione una o varias variables."),
             ui.div(
                 ui.tags.div(
                     ui.tags.span("Objetivo actual: ", style="font-weight:600;"),
@@ -741,7 +741,7 @@ def predicciones_server(input, output, session):
             PANEL_STYLES,
             ui.h3("Panel 3: configurar filtros"),
             ui.p(
-                "Para cada variable, se muestran los filtros definidos en IA.tbl_admin_filtros."
+                "Para cada variable, se muestran los filtros correspondientes."
             ),
             ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
             ui.div(

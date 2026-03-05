@@ -79,7 +79,7 @@ def server(input, output, session):
                     ui.input_action_button(
                         "open_escenarios",
                         ui.tags.div(
-                            ui.tags.div("\U0001f680", style="font-size:2.5rem; margin-bottom:8px;"),
+                            ui.tags.div("📈", style="font-size:2.5rem; margin-bottom:8px;"),
                             ui.tags.div("Escenarios", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
                             ui.tags.div(
                                 "Simula escenarios futuros modificando exógenas y analiza el impacto en la predicción.",
