@@ -16,6 +16,7 @@ from front.utils.back_api_wrappers import (
     get_date_range_for_variable,
     get_filters_for_variable,
     get_distinct_values_for_column,
+    get_distinct_values_for_column,
     get_table_columns,
     get_metadata_for_variable as get_metadata_for_variable_api,
 )
@@ -191,6 +192,7 @@ class PrediccionesCache:
         self._metadata_cache: dict[str, dict] = {}
         self._filters_cache: dict[str, list[dict]] = {}
         self._distinct_cache: dict[tuple[str, str, str], list[str]] = {}
+        self._distinct_complete_cache: dict[tuple[str, str, str], list[str]] = {}
         self._table_cols_cache: dict[str, set[str]] = {}
 
     def build_name_to_table(self, catalog_entries) -> dict[str, str]:
@@ -257,6 +259,15 @@ class PrediccionesCache:
             return self._distinct_cache[key]
         vals = get_distinct_values_for_column(schema, table, col) or []
         self._distinct_cache[key] = vals
+        return vals
+
+    def get_distinct_complete(self, schema: str, table: str, col: str) -> list[str]:
+        """Como get_distinct pero solo devuelve valores con cobertura temporal completa (sin huecos). Hace fallback al DISTINCT simple si es necesario."""
+        key = (schema, table, col)
+        if key in self._distinct_complete_cache:
+            return self._distinct_complete_cache[key]
+        vals = get_distinct_values_for_column(schema, table, col, complete=True) or []
+        self._distinct_complete_cache[key] = vals
         return vals
 
     def get_table_cols(self, schema: str, table: str) -> set[str]:

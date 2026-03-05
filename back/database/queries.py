@@ -10,6 +10,30 @@ CATALOG_SCHEMA_IDENT = sql.Identifier(CATALOG_SCHEMA)
 VARIABLES_TABLE_IDENT = sql.Identifier(VARIABLES_TABLE)
 FILTERS_TABLE_IDENT = sql.Identifier(FILTERS_TABLE)
 
+# Fragmento SQL reutilizable: convierte la columna `mes_txt` (ya normalizada con
+# lower/trim) en el número de mes (1-12). Úsalo en cualquier query que tenga
+# un CTE/subselect que exponga `mes_txt`.
+MES_NUM_CASE = sql.SQL("""
+    CASE
+        WHEN mes_txt ~ '^[0-9][0-9]?$'
+             AND mes_txt::int BETWEEN 1 AND 12
+             THEN mes_txt::int
+        WHEN mes_txt = 'enero'     THEN 1
+        WHEN mes_txt = 'febrero'   THEN 2
+        WHEN mes_txt = 'marzo'     THEN 3
+        WHEN mes_txt = 'abril'     THEN 4
+        WHEN mes_txt = 'mayo'      THEN 5
+        WHEN mes_txt = 'junio'     THEN 6
+        WHEN mes_txt = 'julio'     THEN 7
+        WHEN mes_txt = 'agosto'    THEN 8
+        WHEN mes_txt IN ('septiembre','setiembre') THEN 9
+        WHEN mes_txt = 'octubre'   THEN 10
+        WHEN mes_txt = 'noviembre' THEN 11
+        WHEN mes_txt = 'diciembre' THEN 12
+        ELSE NULL
+    END
+""")
+
 GET_DATE_RANGE_FOR_VARIABLE = sql.SQL("""
     WITH src AS (
         SELECT
@@ -17,32 +41,11 @@ GET_DATE_RANGE_FOR_VARIABLE = sql.SQL("""
             lower(trim(mes::text)) AS mes_txt
         FROM {schema}.{nombre_tabla}
         WHERE anio IS NOT NULL
-        AND mes  IS NOT NULL
+          AND mes  IS NOT NULL
     ),
     t AS (
         SELECT
-            make_date(
-                anio,
-                CASE
-                    WHEN mes_txt ~ '^[0-9][0-9]?$'
-                        AND mes_txt::int BETWEEN 1 AND 12
-                        THEN mes_txt::int
-                    WHEN mes_txt = 'enero' THEN 1
-                    WHEN mes_txt = 'febrero' THEN 2
-                    WHEN mes_txt = 'marzo' THEN 3
-                    WHEN mes_txt = 'abril' THEN 4
-                    WHEN mes_txt = 'mayo' THEN 5
-                    WHEN mes_txt = 'junio' THEN 6
-                    WHEN mes_txt = 'julio' THEN 7
-                    WHEN mes_txt = 'agosto' THEN 8
-                    WHEN mes_txt IN ('septiembre','setiembre') THEN 9
-                    WHEN mes_txt = 'octubre' THEN 10
-                    WHEN mes_txt = 'noviembre' THEN 11
-                    WHEN mes_txt = 'diciembre' THEN 12
-                    ELSE NULL
-                END,
-                1
-            ) AS fecha_mes
+            make_date(anio, {mes_num_case}, 1) AS fecha_mes
         FROM src
     )
     SELECT
