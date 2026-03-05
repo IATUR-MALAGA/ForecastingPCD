@@ -163,8 +163,8 @@ def escenarios_server(input, output, session):
     def step_indicator():
         step = current_step.get()
         stype = scenario_type_rv.get()
-        # En paso 0 o modo pasado no mostramos indicador de pasos
-        if step == 0 or stype != "futuro":
+        # En paso 0 no mostramos indicador de pasos
+        if step == 0 or stype not in ("futuro", "pasado"):
             return ui.div()
 
         labels = ["Objetivo", "Predictoras", "Filtros", "Escenarios"]
@@ -300,7 +300,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_1():
-        if current_step.get() != 1 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 1 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         grouped = group_by_category(catalog_entries)
@@ -413,7 +413,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_2():
-        if current_step.get() != 2 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 2 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         target = target_var_rv.get()
@@ -695,7 +695,7 @@ def escenarios_server(input, output, session):
     @output
     @render.ui
     def step_panel_3():
-        if current_step.get() != 3 or scenario_type_rv.get() != "futuro":
+        if current_step.get() != 3 or scenario_type_rv.get() not in ("futuro", "pasado"):
             return ui.div()
 
         vars_sel = vars_to_config()
@@ -1129,6 +1129,10 @@ def escenarios_server(input, output, session):
 
         return ui.tags.div(
             ui.tags.b("2) Exógenas activas"),
+            ui.tags.span(
+                "Selecciona las exógenas que quieres incluir en el escenario futuro.",
+                style="font-size:12px; color:#6b7280; margin-bottom:8px; display:block;",
+            ),
             ui.input_checkbox_group(
                 "esc_fut_active_exogs",
                 label="",
@@ -1358,6 +1362,7 @@ def escenarios_server(input, output, session):
                     "model": model,
                     "fig": fig,
                     "pred_df": pred_df,
+                    "mode": "future",
                 }
             )
             scenario_err_rv.set(None)
@@ -1375,7 +1380,7 @@ def escenarios_server(input, output, session):
     @render.image(delete_file=True)
     def esc_fut_plot():
         res = scenario_res_rv.get()
-        if not res:
+        if not res or res.get("mode") == "past":
             return {"src": "", "alt": "Sin resultados"}
 
         fig = res["fig"]
@@ -1391,7 +1396,7 @@ def escenarios_server(input, output, session):
     @render.data_frame
     def esc_fut_table():
         res = scenario_res_rv.get()
-        if not res or res.get("pred_df") is None:
+        if not res or res.get("mode") == "past" or res.get("pred_df") is None:
             return render.DataGrid(pd.DataFrame())
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
@@ -1522,39 +1527,631 @@ def escenarios_server(input, output, session):
         current_step.set(3)
 
     # =====================================================================
-    # Escenarios PASADOS (placeholder — por desarrollar)
+    # Escenarios PASADOS — Panel 4
     # =====================================================================
+
+    past_scenario_err_rv = reactive.Value(None)
+
+    def _past_cell_id(exog_name: str, k: int) -> str:
+        return stable_id("esc_past_val", f"{exog_name}__P{k}")
+
+    # --- Reactive calcs (past) ---
+
+    @reactive.Calc
+    def _past_target_table() -> str:
+        """Nombre real de la tabla de la variable objetivo."""
+        target = target_var_rv.get()
+        if not target:
+            return ""
+        return name_to_table.get(target, target)
+
+    @reactive.Calc
+    def _past_calendar_input_id() -> str | None:
+        """ID del input generado por create_calendar_filter para el target."""
+        table = _past_target_table()
+        if not table:
+            return None
+        filtros = cache.get_filters(table)
+        temp = detect_temporal_filters(filtros)
+        if not temp["has_any"]:
+            return None
+        # create_calendar_filter genera un date_range si hay mes o dia,
+        # o un selectize de anio si solo hay anio.
+        if temp["mes"] or temp["dia"]:
+            return stable_id("flt", f"{temp['table']}__date_range")
+        if temp["anio"]:
+            return stable_id("flt", f"{temp['table']}__anio")
+        return None
+
+    @reactive.Calc
+    def past_exogs() -> list[str]:
+        return list(predictors_rv.get() or [])
+
+    @reactive.Calc
+    def past_active_exogs() -> list[str]:
+        exogs = past_exogs()
+        if "esc_past_active_exogs" not in input:
+            return exogs
+        selected = input.esc_past_active_exogs() or []
+        if isinstance(selected, str):
+            selected = [selected]
+        return [ex for ex in exogs if ex in set(selected)]
+
+    @reactive.Calc
+    def past_model() -> str:
+        if "esc_past_model" not in input:
+            return "sarimax"
+        return input.esc_past_model() or "sarimax"
+
+    @reactive.Calc
+    def past_window_range():
+        cal_id = _past_calendar_input_id()
+        if cal_id is None or cal_id not in input:
+            return (None, None)
+        val = input[cal_id]()
+        if val and len(val) >= 2:
+            return (val[0], val[1])
+        return (None, None)
+
+    @reactive.Calc
+    def past_window_dates() -> pd.DatetimeIndex:
+        ws, we = past_window_range()
+        if ws is None or we is None:
+            return pd.DatetimeIndex([])
+        temp = target_temporalidad()
+        start_dt = pd.to_datetime(ws, errors="coerce")
+        end_dt = pd.to_datetime(we, errors="coerce")
+        if pd.isna(start_dt) or pd.isna(end_dt):
+            return pd.DatetimeIndex([])
+        if _is_monthly(temp):
+            start_dt = start_dt.to_period("M").to_timestamp(how="start")
+            end_dt = end_dt.to_period("M").to_timestamp(how="start")
+            freq = "MS"
+        else:
+            start_dt = start_dt.normalize()
+            end_dt = end_dt.normalize()
+            freq = "D"
+        return pd.date_range(start=start_dt, end=end_dt, freq=freq)
+
+    @reactive.Calc
+    def past_matrix_values() -> dict[str, list[float | None]]:
+        exogs = past_active_exogs()
+        dates = past_window_dates()
+        out: dict[str, list[float | None]] = {}
+        for ex in exogs:
+            row = []
+            for k in range(1, len(dates) + 1):
+                cid = _past_cell_id(ex, k)
+                v = input[cid]() if cid in input else None
+                row.append(v)
+            out[ex] = row
+        return out
+
+    # --- Exog selector (past) ---
+
+    @output
+    @render.ui
+    def esc_past_exog_selector():
+        if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
+            return ui.div()
+        exogs = past_exogs()
+        if not exogs:
+            return ui.div()
+        return ui.tags.div(
+            ui.tags.b("2) Exógenas activas"),
+            ui.tags.span(
+                "Selecciona las exógenas que quieres incluir en el escenario futuro.",
+                style="font-size:12px; color:#6b7280; margin-bottom:8px; display:block;",
+            ),
+            ui.input_checkbox_group(
+                "esc_past_active_exogs",
+                label="",
+                choices={ex: ex for ex in exogs},
+                selected=exogs,
+                inline=False,
+            ),
+            ui.tags.span(
+                "Desmarca una exógena para excluirla del escenario.",
+                style="font-size:12px; color:#6b7280;",
+            ),
+            style=(
+                "margin-top:10px; padding:10px 12px; border:1px solid #e5e7eb; "
+                "border-radius:12px; background:#fff;"
+            ),
+        )
+
+    # --- Editable table (past) ---
+
+    @output
+    @render.ui
+    def esc_past_exog_table():
+        if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
+            return ui.div()
+        exogs = past_active_exogs()
+        dates = past_window_dates()
+        temp = target_temporalidad()
+        if not exogs:
+            return ui.tags.div(
+                ui.tags.b("No hay exógenas activas."),
+                ui.tags.span(
+                    " Marca al menos una exógena en el selector para poder editar valores."
+                ),
+                style="color:#6b7280; margin-top:8px;",
+            )
+        if dates.empty:
+            return ui.tags.div(
+                ui.tags.b("Selecciona un rango de fechas válido para ver la tabla."),
+                style="color:#6b7280; margin-top:8px;",
+            )
+        h = len(dates)
+        if h > 60:
+            return ui.tags.div(
+                ui.tags.b(f"Rango demasiado amplio ({h} periodos)."),
+                ui.tags.span(
+                    " Reduce el rango a un máximo de 60 periodos para editar valores."
+                ),
+                style="color:#991b1b; margin-top:8px;",
+            )
+        header_cells = [
+            ui.tags.th(
+                "Exógena", style="position:sticky; left:0; background:#fff;"
+            )
+        ]
+        for k in range(1, h + 1):
+            header_cells.append(
+                ui.tags.th(
+                    ui.tags.div(f"P{k}", style="font-weight:700;"),
+                    ui.tags.div(
+                        _dt_label(dates[k - 1], temp),
+                        style="font-size:12px; color:#6b7280; margin-top:2px;",
+                    ),
+                )
+            )
+        body_rows = []
+        for ex in exogs:
+            cells = [
+                ui.tags.td(
+                    ui.tags.span(ex),
+                    style=(
+                        "position:sticky; left:0; background:#fff; "
+                        "font-weight:600; white-space:nowrap;"
+                    ),
+                )
+            ]
+            for k in range(1, h + 1):
+                cid = _past_cell_id(ex, k)
+                cells.append(
+                    ui.tags.td(
+                        ui.input_numeric(cid, label="", value=None, step=0.01),
+                        style="min-width:120px;",
+                    )
+                )
+            body_rows.append(ui.tags.tr(*cells))
+        return ui.tags.div(
+            ui.tags.div(
+                ui.tags.b("3) Valores modificados de exógenas"),
+                ui.tags.span(
+                    " (rellena las celdas que quieras modificar; "
+                    "las vacías conservan el valor histórico original)"
+                ),
+                style="margin-bottom:8px;",
+            ),
+            ui.tags.div(
+                ui.tags.table(
+                    ui.tags.thead(ui.tags.tr(*header_cells)),
+                    ui.tags.tbody(*body_rows),
+                    style="border-collapse:collapse; width:max-content;",
+                ),
+                style=(
+                    "overflow:auto; max-width:100%; border:1px solid #e5e7eb; "
+                    "border-radius:12px; padding:8px;"
+                ),
+            ),
+        )
+
+    # --- Compute past scenario ---
+
+    @reactive.Effect
+    @reactive.event(input.esc_past_calc)
+    def _compute_past_scenario():
+        if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
+            return
+        if int(input.esc_past_calc() or 0) == 0:
+            return
+
+        past_scenario_err_rv.set("Calculando…")
+        scenario_res_rv.set(None)
+
+        try:
+            target = target_var_rv.get()
+            exogs = past_active_exogs()
+            model = past_model()
+            filters = selected_filters_by_var()
+            ws, we = past_window_range()
+            dates = past_window_dates()
+
+            if not target:
+                past_scenario_err_rv.set("No hay variable objetivo seleccionada.")
+                return
+            if not ws or not we:
+                past_scenario_err_rv.set("Selecciona un rango de fechas.")
+                return
+            if dates.empty:
+                past_scenario_err_rv.set(
+                    "El rango de fechas seleccionado no genera periodos."
+                )
+                return
+
+            # Build overrides: only for cells with a value entered
+            mat = past_matrix_values()
+            overrides = []
+            for ex in exogs:
+                vals = mat.get(ex, [])
+                for k, v in enumerate(vals):
+                    if v is not None:
+                        date_str = pd.to_datetime(dates[k]).strftime("%Y-%m-%d")
+                        overrides.append(
+                            {
+                                "var": ex,
+                                "op": "set",
+                                "value": float(v),
+                                "start": date_str,
+                                "end": date_str,
+                            }
+                        )
+
+            runner = MODEL_RUNNERS.get(model)
+            if runner is None:
+                past_scenario_err_rv.set(f"Modelo no soportado: {model}")
+                return
+
+            # Normalize window dates to match past_window_dates() logic
+            temp = target_temporalidad()
+            ws_dt = pd.to_datetime(ws, errors="coerce")
+            we_dt = pd.to_datetime(we, errors="coerce")
+            if _is_monthly(temp):
+                ws_dt = ws_dt.to_period("M").to_timestamp(how="start")
+                we_dt = we_dt.to_period("M").to_timestamp(how="end")
+            else:
+                ws_dt = ws_dt.normalize()
+                we_dt = we_dt.normalize()
+            ws_str = ws_dt.strftime("%Y-%m-%d")
+            we_str = we_dt.strftime("%Y-%m-%d")
+
+            payload = {
+                "target_var": target,
+                "predictors": list(exogs),
+                "filters_by_var": filters,
+                "train_ratio": 0.70,
+                "auto_params": True,
+                "return_df": True,
+                "horizon": len(dates),
+                "scenario_mode": "past",
+                "scenario_window": {"start": ws_str, "end": we_str},
+                "scenario_overrides": overrides,
+                "scenario_future_values": [],
+            }
+
+            if model == "sarimax":
+                payload.update({"s": 12})
+            elif model == "xgboost":
+                payload.update(
+                    {
+                        "use_target_lags": True,
+                        "max_lag": 12,
+                        "recursive_forecast": True,
+                    }
+                )
+
+            resp = runner(payload)
+
+            df_resp = pd.DataFrame(resp.get("df") or [])
+            if df_resp.empty:
+                past_scenario_err_rv.set("El backend devolvió un dataframe vacío.")
+                return
+
+            y_col = resp["y_col"]
+            y_forecast = list(resp.get("y_forecast") or [])
+            y_true = list(resp.get("y_true") or [])
+            horizon_resp = int(resp.get("horizon", len(dates)))
+
+            # Build prediction index from the selected dates
+            pred_index = dates
+            m = min(len(y_forecast), len(pred_index))
+            y_forecast = y_forecast[:m]
+            pred_index = pred_index[:m]
+            if y_true:
+                y_true = y_true[:m]
+
+            pred_series = pd.Series(
+                y_forecast, index=pred_index, name="Prediction"
+            )
+
+            fig = plot_predictions(
+                df=df_resp,
+                pred=pred_series,
+                title=f"Escenario pasado ({model.upper()})",
+                ylabel="Valores",
+                xlabel="Fecha",
+                column_y=y_col,
+                periodos_a_predecir=horizon_resp,
+                holidays_col=None,
+            )
+
+            temp = target_temporalidad()
+            date_fmt = "%m-%Y" if _is_monthly(temp) else "%d-%m-%Y"
+            results_data: dict = {
+                "Fecha": [d.strftime(date_fmt) for d in pred_index],
+                "Predicción": y_forecast,
+            }
+            if y_true:
+                results_data["Valor real"] = y_true
+
+            pred_df = pd.DataFrame(results_data)
+
+            # Add difference and percentage columns (Predicción - Valor real)
+            if "Valor real" in pred_df.columns and "Predicción" in pred_df.columns:
+                real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
+                pred = pd.to_numeric(pred_df["Predicción"], errors="coerce")
+                pred_df["Diferencia"] = (pred - real).round(4)
+                pred_df["% Diferencia"] = (
+                    ((pred - real) / real.replace(0, float("nan"))) * 100
+                ).round(2)
+
+            scenario_res_rv.set(
+                {
+                    "model": model,
+                    "fig": fig,
+                    "pred_df": pred_df,
+                    "mode": "past",
+                }
+            )
+            past_scenario_err_rv.set(None)
+
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = exc.response.json().get("detail", exc.response.text)
+            except Exception:
+                detail = exc.response.text
+            past_scenario_err_rv.set(f"Error backend: {detail}")
+        except Exception as e:
+            past_scenario_err_rv.set(f"Error: {type(e).__name__}: {e}")
+
+    # --- Outputs (past) ---
+
+    @output
+    @render.plot
+    def esc_past_plot():
+        res = scenario_res_rv.get()
+        if not res or res.get("mode") != "past":
+            return None
+        return res.get("fig")
+
+    @output
+    @render.ui
+    def esc_past_table():
+        res = scenario_res_rv.get()
+        if not res or res.get("mode") != "past" or res.get("pred_df") is None:
+            return ui.div()
+        df = res["pred_df"].copy()
+        for col in ["Predicción", "Valor real"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
+
+        # Build HTML table with color-coded Diferencia and % Diferencia
+        header_cells = [ui.tags.th(c, style="padding:6px 10px; border-bottom:2px solid #e5e7eb;") for c in df.columns]
+        rows = []
+        for _, row in df.iterrows():
+            cells = []
+            for col in df.columns:
+                val = row[col]
+                style = "padding:6px 10px; border-bottom:1px solid #f0f0f0;"
+                if col in ("Diferencia", "% Diferencia"):
+                    try:
+                        num = float(val)
+                        # Diferencia = pred - real. <0 → rojo, >0 → verde
+                        color = "#dc2626" if num < 0 else "#16a34a"
+                        style += f" color:{color}; font-weight:600;"
+                        if col == "% Diferencia":
+                            val = f"{num:.2f}%"
+                    except (ValueError, TypeError):
+                        pass
+                cells.append(ui.tags.td(str(val), style=style))
+            rows.append(ui.tags.tr(*cells))
+
+        return ui.tags.div(
+            ui.tags.table(
+                ui.tags.thead(ui.tags.tr(*header_cells)),
+                ui.tags.tbody(*rows),
+                style="border-collapse:collapse; width:100%; font-size:0.9rem;",
+            ),
+            style="overflow:auto; max-height:420px;",
+        )
+
+    # --- Panel UI (past) ---
+
     @output
     @render.ui
     def step_panel_pasado():
-        if scenario_type_rv.get() != "pasado" or current_step.get() < 1:
+        if scenario_type_rv.get() != "pasado" or current_step.get() != 4:
             return ui.div()
+
+        target = target_var_rv.get()
+        target_start_raw, target_end_raw = cache.get_date_range(target or "")
+        temp = target_temporalidad()
+
+        min_dt = (
+            pd.to_datetime(target_start_raw)
+            if target_start_raw
+            else pd.Timestamp("2000-01-01")
+        )
+        max_dt = (
+            pd.to_datetime(target_end_raw)
+            if target_end_raw
+            else pd.Timestamp.now()
+        )
+        min_date = min_dt.date()
+        max_date = max_dt.date()
+
+        # Sensible default: last few periods of the historical range
+        if _is_monthly(temp):
+            default_start = (max_dt - pd.DateOffset(months=6)).date()
+        else:
+            default_start = (max_dt - pd.Timedelta(days=30)).date()
+        default_start = max(min_date, default_start)
+
+        res = scenario_res_rv.get()
+        err = past_scenario_err_rv.get()
+
+        # --- 1) Date range selector (using create_calendar_filter) ---
+        table = _past_target_table()
+        filtros = cache.get_filters(table) if table else []
+
+        calendar_widget = create_calendar_filter(
+            filtros=filtros,
+            cache=cache,
+            stable_id_func=stable_id,
+            start_date=min_date,
+            end_date=max_date,
+            current_input=input,
+        )
+
+        if calendar_widget is None:
+            # Fallback: no temporal filters configured
+            calendar_widget = ui.tags.div(
+                ui.tags.span(
+                    "No se encontraron filtros temporales para esta variable.",
+                    style="color:#991b1b;",
+                ),
+                style="padding:8px;",
+            )
+
+        date_range_card = ui.card(
+            ui.h3(
+                "Panel 4: Escenarios pasados",
+                style="margin:0; text-align:center;",
+            ),
+            ui.tags.div(
+                "Modifica valores históricos de las exógenas y observa "
+                "cómo habría cambiado la predicción.",
+                style="color:#6b7280; margin-top:4px; text-align:center;",
+            ),
+            ui.tags.hr(style="margin:12px 0;"),
+            ui.tags.div(
+                ui.tags.b("1) Rango de fechas a predecir"),
+                ui.tags.span(
+                    " (selecciona la ventana temporal del escenario)",
+                    style="font-size:0.85rem; color:#6b7280;",
+                ),
+                calendar_widget,
+                ui.tags.small(
+                    "El modelo se entrena con datos anteriores al inicio "
+                    "de la ventana seleccionada.",
+                    style=(
+                        "display:block; color:#57606a; font-size:0.85em; "
+                        "margin-top:4px; font-style:italic;"
+                    ),
+                ),
+                style="max-width:480px; margin:0 auto;",
+            ),
+            style="padding:14px; border-radius:14px;",
+        )
+
+        # --- 4) Model + compute ---
+        model_box = ui.card(
+            ui.tags.div(
+                ui.input_radio_buttons(
+                    "esc_past_model",
+                    "4) Modelo",
+                    choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
+                    selected=past_model(),
+                    inline=True,
+                ),
+                style="display:flex; justify-content:center;",
+            ),
+            ui.tags.div(
+                ui.input_action_button(
+                    "esc_past_calc",
+                    "Calcular escenario",
+                    class_="btn-primary",
+                ),
+                style="margin-top:10px; display:flex; justify-content:center;",
+            ),
+            style="padding:14px; border-radius:14px; margin-top:12px;",
+        )
+
+        # --- Status ---
+        status = ui.div()
+        if err:
+            status = ui.tags.div(
+                ui.tags.b("Estado: "),
+                ui.tags.span(err),
+                style=(
+                    "margin-top:10px; padding:10px 12px; border:1px solid #fecaca; "
+                    "border-radius:12px; background:#fef2f2; color:#991b1b;"
+                ),
+            )
+        elif res is None or res.get("mode") != "past":
+            status = ui.tags.div(
+                ui.tags.b("Estado: "),
+                ui.tags.span(
+                    "selecciona fechas, modifica exógenas y pulsa "
+                    "«Calcular escenario».",
+                    style="color:#6b7280;",
+                ),
+                style=(
+                    "margin-top:10px; padding:10px 12px; "
+                    "border:1px dashed #d1d5db; border-radius:12px; "
+                    "background:#fafafa;"
+                ),
+            )
+
+        # --- Results ---
+        outputs = ui.div()
+        if res is not None and res.get("mode") == "past":
+            outputs = ui.tags.div(
+                ui.card(
+                    ui.h5("Gráfico", style="margin:0 0 8px 0;"),
+                    ui.output_plot("esc_past_plot", width="100%", height="420px"),
+                    style=(
+                        "padding:12px; border-radius:14px; "
+                        "flex:2 1 640px; min-width:520px;"
+                    ),
+                ),
+                ui.card(
+                    ui.h5("Predicción vs valor real", style="margin:0 0 8px 0;"),
+                    ui.tags.div(
+                        ui.output_ui("esc_past_table"),
+                        style="max-height:420px; overflow:auto;",
+                    ),
+                    style=(
+                        "padding:12px; border-radius:14px; "
+                        "flex:1 1 420px; min-width:340px;"
+                    ),
+                ),
+                style=(
+                    "display:flex; gap:12px; flex-wrap:wrap; "
+                    "align-items:flex-start; margin-top:12px;"
+                ),
+            )
+
+        footer = ui.tags.div(
+            ui.input_action_button("esc_prev_pasado", "← Anterior"),
+            style="margin-top:12px;",
+        )
 
         return ui.div(
             PANEL_STYLES,
-            ui.card(
-                ui.tags.div(
-                    ui.tags.div(
-                        "\U0001f6a7", style="font-size:3rem; margin-bottom:12px;"
-                    ),
-                    ui.h3("Escenarios Pasados", style="margin:0 0 8px 0;"),
-                    ui.tags.p(
-                        "Este módulo está en desarrollo. Aquí podrás modificar valores "
-                        "históricos de las exógenas y observar cómo habría cambiado la predicción.",
-                        style="color:#475569; max-width:480px; margin:0 auto;",
-                    ),
-                    style="text-align:center; padding:40px 20px;",
-                ),
-                ui.tags.div(
-                    ui.input_action_button("esc_prev_pasado", "← Volver al selector"),
-                    style="display:flex; justify-content:center; padding-bottom:20px;",
-                ),
-                style="border-radius:14px; max-width:600px; margin:24px auto;",
-            ),
+            date_range_card,
+            ui.output_ui("esc_past_exog_selector"),
+            ui.output_ui("esc_past_exog_table"),
+            model_box,
+            status,
+            outputs,
+            footer,
         )
 
     @reactive.Effect
     @reactive.event(input.esc_prev_pasado)
-    def _go_step_0_from_pasado():
-        scenario_type_rv.set(None)
-        current_step.set(0)
+    def _go_step_3_from_pasado():
+        current_step.set(3)
