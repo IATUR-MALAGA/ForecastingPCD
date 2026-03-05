@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import pandas as pd
 from shiny import ui, reactive, render, module
@@ -38,6 +39,7 @@ def predicciones_server(input, output, session):
 
     target_var_rv = reactive.Value(None)
     predictors_rv = reactive.Value([])
+    _SPINNER_ID = "_pred_spinner"
     saved_filter_values_rv = reactive.Value({})
 
     catalog_entries = get_names_in_table_catalog() or []
@@ -474,7 +476,6 @@ def predicciones_server(input, output, session):
             except Exception:
                 extend_steps = 0
 
-        
         target_temporal_filters = []
 
         for item in vars_to_config():
@@ -514,7 +515,6 @@ def predicciones_server(input, output, session):
                         target_temporal_filters = [temporal_filter]
 
             if not is_target and target_temporal_filters:
-
                 for tf in target_temporal_filters:
                     if (
                         tf.get("kind") == "date_range"
@@ -536,13 +536,12 @@ def predicciones_server(input, output, session):
                     else:
                         selected_list.append(
                             {
-                                "table": table,  
+                                "table": table,
                                 "col": tf["col"],
                                 "values": tf["values"],
                             }
                         )
 
-            
             for f in filtros:
                 col_lower = f["col"].lower().strip()
                 if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
@@ -582,13 +581,11 @@ def predicciones_server(input, output, session):
 
         panels = []
 
-       
         target_var = target_var_rv.get()
         target_start, target_end = target_selected_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
-        
         display_start = (
             target_start
             if target_start
@@ -600,7 +597,6 @@ def predicciones_server(input, output, session):
             else (cache.get_date_range(target_var)[1] if target_var else None)
         )
 
-        
         target_start_fmt = (
             _fmt_date_temp(display_start, target_temporality) if display_start else "—"
         )
@@ -608,12 +604,7 @@ def predicciones_server(input, output, session):
             _fmt_date_temp(display_end, target_temporality) if display_end else "—"
         )
 
-       
-        range_status = (
-            "disponible"
-            if target_start
-            else "disponible"
-        )
+        range_status = "disponible" if target_start else "disponible"
 
         for item in vars_sel:
             pretty = item["pretty"]
@@ -630,7 +621,6 @@ def predicciones_server(input, output, session):
                         "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
                     )
                 else:
-                    
                     body = ui.div(
                         ui.tags.div(
                             ui.tags.span(
@@ -656,7 +646,6 @@ def predicciones_server(input, output, session):
                 controls = []
 
                 if not is_target:
-                    
                     controls.append(
                         ui.tags.div(
                             ui.tags.div(
@@ -759,7 +748,6 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        
         saved = {}
         for item in vars_to_config():
             t = item["table"]
@@ -772,7 +760,11 @@ def predicciones_server(input, output, session):
                 if input_id in input:
                     vals = input[input_id]()
                     if vals:
-                        saved[input_id] = list(vals) if isinstance(vals, (list, tuple)) else [str(vals)]
+                        saved[input_id] = (
+                            list(vals)
+                            if isinstance(vals, (list, tuple))
+                            else [str(vals)]
+                        )
         saved_filter_values_rv.set(saved)
         current_step.set(4)
 
@@ -830,7 +822,6 @@ def predicciones_server(input, output, session):
     def _build_pred_df(
         future: pd.DataFrame, pred_vals, date_fmt: str = "%d-%m-%Y"
     ) -> pd.DataFrame:
-        
         if {"anio", "mes"}.issubset(future.columns):
             if "dia" in future.columns:
                 fechas = pd.to_datetime(
@@ -1012,7 +1003,7 @@ def predicciones_server(input, output, session):
     # ------------------------
     @reactive.effect
     @reactive.event(input.calc_pred)
-    def _compute_prediction_on_click():
+    async def _compute_prediction_on_click():
         if current_step.get() != 4:
             return
         if input.calc_pred() == 0:
@@ -1021,6 +1012,7 @@ def predicciones_server(input, output, session):
             pred_results_rv.set(None)
             return
 
+        # Leer valores reactivos en el hilo principal
         horizon = pred_horizon()
         if horizon < 1:
             pred_results_rv.set(None)
@@ -1031,40 +1023,60 @@ def predicciones_server(input, output, session):
         predictors_used = exog_selected()
         target = target_var_rv.get()
         filters = selected_filters_by_var()
+        sig = pred_signature()
 
         runner = MODEL_RUNNERS.get(model)
         if runner is None:
             pred_results_rv.set(None)
-            last_sig_rv.set(pred_signature())
+            last_sig_rv.set(sig)
             return
 
         payload = _build_payload(model, target, predictors_used, filters, horizon)
-        resp = runner(payload)
 
-        parsed = _parse_forecast_response(resp)
-        if parsed is None:
-            pred_results_rv.set(None)
-            last_sig_rv.set(pred_signature())
-            return
-
-        df, y_col, future, h, pred_vals, pred_series = parsed
-        pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
-
-        fig = plot_predictions(
-            df=df,
-            pred=pred_series,
-            title=(
-                "Predicciones SARIMAX" if model == "sarimax" else "Predicciones XGBoost"
+        # Insertar spinner (bypass flush, se envía inmediatamente al browser)
+        _spinner_id = _SPINNER_ID
+        ui.insert_ui(
+            ui.tags.div(
+                ui.tags.div(class_="graph-spinner"),
+                ui.tags.div("Calculando predicción...", class_="graph-loading-text"),
+                class_="graph-loading-container",
+                id=_spinner_id,
             ),
-            ylabel="Valores",
-            xlabel="Fecha",
-            column_y=y_col,
-            periodos_a_predecir=h,
-            holidays_col=None,
+            selector="#pred_result_area",
+            where="afterBegin",
+            immediate=True,
         )
 
-        pred_results_rv.set(_pack_result(model, resp, fig, pred_df, predictors_used, h))
-        last_sig_rv.set(pred_signature())
+        try:
+
+            def _run_prediction():
+                resp = runner(payload)
+                parsed = _parse_forecast_response(resp)
+                if parsed is None:
+                    return None
+                df, y_col, future, h, pred_vals, pred_series = parsed
+                pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
+                fig = plot_predictions(
+                    df=df,
+                    pred=pred_series,
+                    title=(
+                        "Predicciones SARIMAX"
+                        if model == "sarimax"
+                        else "Predicciones XGBoost"
+                    ),
+                    ylabel="Valores",
+                    xlabel="Fecha",
+                    column_y=y_col,
+                    periodos_a_predecir=h,
+                    holidays_col=None,
+                )
+                return _pack_result(model, resp, fig, pred_df, predictors_used, h)
+
+            result = await asyncio.to_thread(_run_prediction)
+            pred_results_rv.set(result)
+            last_sig_rv.set(sig)
+        finally:
+            ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
 
     # ------------------------
     # Outputs (usa el almacén, no calcula)
@@ -1185,21 +1197,26 @@ def predicciones_server(input, output, session):
             style="margin-top: 12px;",
         )
 
+        # Estado: calculando (spinner se inyecta via insert_ui)
+
         # Estado sin resultados
         if res is None:
             return ui.div(
                 PANEL_STYLES,
                 header,
                 ui.tags.div(
-                    ui.tags.span("Estado: ", style="font-weight:600;"),
-                    ui.tags.span(
-                        "listo para calcular. Pulsa «Calcula predicción».",
-                        style="color:#6b7280;",
+                    ui.tags.div(
+                        ui.tags.span("Estado: ", style="font-weight:600;"),
+                        ui.tags.span(
+                            "listo para calcular. Pulsa «Calcula predicción».",
+                            style="color:#6b7280;",
+                        ),
+                        style=(
+                            "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
+                            "border-radius: 12px; background:#fafafa;"
+                        ),
                     ),
-                    style=(
-                        "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
-                        "border-radius: 12px; background:#fafafa;"
-                    ),
+                    id="pred_result_area",
                 ),
                 footer,
             )
@@ -1263,10 +1280,13 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             header,
-            exogs_line,
-            kpis_title,
-            kpis,
-            body,
+            ui.tags.div(
+                exogs_line,
+                kpis_title,
+                kpis,
+                body,
+                id="pred_result_area",
+            ),
             footer,
         )
 
