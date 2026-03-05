@@ -10,6 +10,7 @@ from back.database.repository import (
     get_categories_in_catalog,
     get_date_range_for_variable,
     get_distinct_values_for_column,
+    get_distinct_values_complete_range,
     get_filters_for_variable,
     get_metadata_for_variable,
     get_names_in_table_catalog,
@@ -47,10 +48,17 @@ def catalog_categories():
 
 
 @router.get("/distinct/{schema}/{table}/{column}", response_model=list[str])
-def distinct_values(schema: str, table: str, column: str):
+def distinct_values(
+    schema: str,
+    table: str,
+    column: str,
+    complete: bool = Query(False, description="Si True, solo devuelve valores con cobertura temporal completa (sin huecos)."),
+):
     schema = ensure_pg_identifier(schema, "schema")
     table = ensure_pg_identifier(table, "table")
     column = ensure_pg_identifier(column, "column")
+    if complete:
+        return get_distinct_values_complete_range(schema, table, column)
     return get_distinct_values_for_column(schema, table, column)
 
 

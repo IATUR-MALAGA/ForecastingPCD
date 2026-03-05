@@ -46,8 +46,11 @@ def get_date_range_for_variable(nombre_tabla: str, schema: str = "IA") -> List[D
 def get_filters_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return _get(f"/api/database/{_p(nombre)}/filters")
 
-def get_distinct_values_for_column(schema: str, table: str, column: str) -> List[str]:
-    return _get(f"/api/database/distinct/{_p(schema)}/{_p(table)}/{_p(column)}")
+def get_distinct_values_for_column(schema: str, table: str, column: str, complete: bool = False) -> List[str]:
+    url = f"/api/database/distinct/{_p(schema)}/{_p(table)}/{_p(column)}"
+    if complete:
+        url += "?complete=true"
+    return _get(url)
 
 def get_table_columns(schema: str, table: str) -> List[Dict[str, Any]]:
     return _get(f"/api/database/schemas/{_p(schema)}/tables/{_p(table)}/columns")

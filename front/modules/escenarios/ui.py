@@ -11,7 +11,7 @@ def escenarios_ui():
             ui.output_ui("step_panel_2"),
             ui.output_ui("step_panel_3"),
             ui.output_ui("step_panel_4"),
-            # --- Escenarios pasados (placeholder) ---
+            # --- Escenarios pasados ---
             ui.output_ui("step_panel_pasado"),
             class_="wizard-container",
         )
