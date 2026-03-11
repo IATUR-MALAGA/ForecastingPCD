@@ -19,6 +19,7 @@ from front.utils.utils import (
     stable_id as _stable_id,
     group_by_category as _group_by_category,
     fmt as _fmt,
+    fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
     build_name_to_table,
     PrediccionesCache,
@@ -102,7 +103,7 @@ def predicciones_server(input, output, session):
 
         panels = []
         for cat, names in grouped.items():
-            btns = []
+            blocks = []
             for name in names:
                 btn_id = _stable_id("pick_target", name)
 
@@ -114,30 +115,91 @@ def predicciones_server(input, output, session):
                     def _on_pick_target(_name=name):
                         target_var_rv.set(_name)
 
-                btns.append(
-                    ui.input_action_button(
-                        btn_id,
-                        name,
-                        class_=(
-                            "var-pick is-selected" if name == selected else "var-pick"
+                meta = cache.get_meta(name)
+                temporalidad = _fmt(meta.get("temporalidad"))
+                granularidad = _fmt(meta.get("granularidad"))
+                unidad_medida = _fmt(meta.get("unidad_medida"))
+                fuente = _fmt(meta.get("fuente"))
+                descripcion = _fmt(meta.get("descripcion"))
+
+                blocks.append(
+                    ui.tags.div(
+                        ui.tags.div(
+                            ui.input_action_button(
+                                btn_id,
+                                name,
+                                class_=(
+                                    "var-pick is-selected" if name == selected else "var-pick"
+                                ),
+                            ),
+                            style="display: flex; align-items: baseline; gap: 6px;",
                         ),
+                        ui.tags.details(
+                            ui.tags.summary(
+                                "Ver más",
+                                style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;",
+                            ),
+                            ui.tags.div(
+                                ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                ),
+                                style="margin-top: 8px; padding: 8px 0;",
+                            ),
+                        ),
+                        class_="var-item",
                     )
                 )
 
             panels.append(
                 ui.accordion_panel(
                     cat,
-                    ui.div(*btns, class_="var-list"),
+                    ui.div(*blocks),
                     value=_slug(cat),
                 )
             )
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 1: Seleccionar variable objetivo"),
-            ui.p("Seleccione una única variable."),
             ui.div(
-                ui.tags.span("Seleccionada: ", style="font-weight:600;"),
+                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Seleccionar variable objetivo",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+                ),
+                ui.tags.p(
+                    "Elige la variable que deseas predecir. Esta será la variable dependiente "
+                    "del modelo, es decir, el valor que los algoritmos intentarán estimar a partir "
+                    "de las variables predictoras que selecciones en el siguiente paso.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
+            ),
+            ui.div(
+                ui.tags.span("\u2705 Seleccionada: ", style="font-weight:600;"),
                 ui.tags.span(selected or "—"),
                 class_="selection-pill",
             ),
@@ -285,8 +347,20 @@ def predicciones_server(input, output, session):
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 2: seleccionar variables predictoras"),
-            ui.p("Seleccione una o varias variables."),
+            ui.div(
+                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Seleccionar variables predictoras",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+                ),
+                ui.tags.p(
+                    "Elige las variables exógenas que alimentarán el modelo. Solo se pueden "
+                    "seleccionar aquellas que sean compatibles en temporalidad y rango con la "
+                    "variable objetivo elegida en el paso anterior.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
+            ),
             ui.div(
                 ui.tags.div(
                     ui.tags.span("Objetivo actual: ", style="font-weight:600;"),
@@ -579,96 +653,27 @@ def predicciones_server(input, output, session):
                 ui.p("No hay variables seleccionadas para configurar."),
             )
 
-        panels = []
-
         target_var = target_var_rv.get()
         target_start, target_end = target_selected_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
-        display_start = (
-            target_start
-            if target_start
-            else (cache.get_date_range(target_var)[0] if target_var else None)
-        )
-        display_end = (
-            target_end
-            if target_end
-            else (cache.get_date_range(target_var)[1] if target_var else None)
-        )
-
-        target_start_fmt = (
-            _fmt_date_temp(display_start, target_temporality) if display_start else "—"
-        )
-        target_end_fmt = (
-            _fmt_date_temp(display_end, target_temporality) if display_end else "—"
-        )
-
-        range_status = "disponible" if target_start else "disponible"
-
-        for item in vars_sel:
+        # --- Build body for each variable ---
+        def _var_body(item):
             pretty = item["pretty"]
             table = item["table"]
             is_target = item.get("is_target", False)
-
             filtros = cache.get_filters(table)
-
-            start_date, end_date = cache.get_date_range(pretty)
 
             if not filtros:
                 if is_target:
-                    body = ui.p(
+                    return ui.p(
                         "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
                     )
                 else:
-                    body = ui.div(
-                        ui.tags.div(
-                            ui.tags.span(
-                                "📌 Variable Exógena",
-                                style="font-weight:600; color:#6e7781;",
-                            ),
-                            style="margin-bottom:12px;",
-                        ),
-                        ui.tags.div(
-                            "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
-                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;",
-                        ),
-                        ui.tags.div(
-                            ui.tags.span(
-                                f"Rango {range_status}: ",
-                                style="font-weight:500; margin-top:8px; display:inline-block;",
-                            ),
-                            ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                            style="margin-top:8px;",
-                        ),
-                    )
+                    return ui.div()
             else:
                 controls = []
-
-                if not is_target:
-                    controls.append(
-                        ui.tags.div(
-                            ui.tags.div(
-                                ui.tags.span(
-                                    "📌 Variable Exógena",
-                                    style="font-weight:600; color:#6e7781;",
-                                ),
-                                style="margin-bottom:12px;",
-                            ),
-                            ui.tags.div(
-                                "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
-                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;",
-                            ),
-                            ui.tags.div(
-                                ui.tags.span(
-                                    f"Rango {range_status}: ", style="font-weight:500;"
-                                ),
-                                ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                                style="margin-bottom:16px;",
-                            ),
-                            style="margin-bottom:16px;",
-                        )
-                    )
 
                 for f in filtros:
                     col_lower = f["col"].lower().strip()
@@ -714,25 +719,107 @@ def predicciones_server(input, output, session):
                         )
                     )
 
-                body = (
+                return (
                     ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
                 )
 
-            panels.append(
-                ui.accordion_panel(
-                    pretty,
-                    body,
-                    value=_slug(table),
+        # --- Separate target vs predictors ---
+        target_item = None
+        predictor_items = []
+        for item in vars_sel:
+            if item.get("is_target"):
+                target_item = item
+            else:
+                predictor_items.append(item)
+
+        # Target box
+        target_box_content = (
+            ui.div(
+                ui.tags.div(
+                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    style="margin-bottom:8px;",
+                ),
+                _var_body(target_item),
+            )
+            if target_item
+            else ui.p("No se ha seleccionado variable objetivo.")
+        )
+
+        target_box = ui.tags.div(
+            ui.tags.div(
+                "🎯 Variable objetivo",
+                style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
+            ),
+            target_box_content,
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+            ),
+        )
+
+        # Predictors box
+        if predictor_items:
+            pred_panels = []
+            for item in predictor_items:
+                pred_panels.append(
+                    ui.accordion_panel(
+                        ui.tags.strong(item["pretty"]),
+                        _var_body(item),
+                        value=_slug(item["table"]),
+                    )
                 )
+
+            predictors_box = ui.tags.div(
+                ui.tags.div(
+                    "📊 Variables predictoras",
+                    ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        "Cada variable predictora se ajustará automáticamente al rango temporal de la variable objetivo.",
+                    ),
+                    style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
+                ),
+                ui.accordion(*pred_panels, id="acc_filters_preds", open=True, multiple=True),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+                ),
+            )
+        else:
+            predictors_box = ui.tags.div(
+                ui.tags.div(
+                    "📊 Variables predictoras",
+                    style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
+                ),
+                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+                ),
             )
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 3: configurar filtros"),
-            ui.p(
-                "Para cada variable, se muestran los filtros correspondientes."
+            ui.div(
+                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Configurar filtros",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+                ),
+                ui.tags.p(
+                    "Para cada variable se muestran los filtros correspondientes. "
+                    "El rango temporal de las exógenas se ajusta automáticamente al de la "
+                    "variable objetivo.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
             ),
-            ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
+            ui.tags.div(
+                target_box,
+                predictors_box,
+                style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;",
+            ),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
@@ -1106,7 +1193,9 @@ def predicciones_server(input, output, session):
 
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
-            df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").round(4)
+            df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
+                lambda v: fmt_num(v, 4) if pd.notna(v) else v
+            )
         return render.DataGrid(df)
 
     # ------------------------
@@ -1225,9 +1314,9 @@ def predicciones_server(input, output, session):
         mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
 
         kpis = ui.tags.div(
-            _kpi_card("MAPE", f"{mape:.2f}%"),
-            _kpi_card("RMSE", f"{rmse:.2f}"),
-            _kpi_card("MAE", f"{mae:.2f}"),
+            _kpi_card("MAPE", fmt_num(mape, 2, "%")),
+            _kpi_card("RMSE", fmt_num(rmse, 2)),
+            _kpi_card("MAE", fmt_num(mae, 2)),
             style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 10px;",
         )
 

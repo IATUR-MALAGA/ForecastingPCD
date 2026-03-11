@@ -267,7 +267,10 @@ def sarimax_run(req: SarimaxRunRequest):
                 if test[exog_cols].isna().any().any():
                     _raise_422("Hay NaNs en exógenas de la ventana de escenario")
 
-            order, seas = _select_params(req, train, exog_cols, y_col, len(test), use_fourier)
+            # For param search, use a small holdout from train (not len(test))
+            # to avoid slicing train to empty inside best_sarimax_params
+            auto_holdout = max(1, min(len(test), int(len(train) * 0.2), 12))
+            order, seas = _select_params(req, train, exog_cols, y_col, auto_holdout, use_fourier)
             model_fit = create_sarimax_model(train=train, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
             exog_test = test[exog_cols].astype(float) if exog_cols else None
             y_forecast = model_fit.predict(start=len(train), end=len(train) + len(test) - 1, exog=exog_test)
@@ -331,6 +334,7 @@ def sarimax_run(req: SarimaxRunRequest):
             _raise_422(f"Split inválido (histórico): n={len(df_hist)}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio.")
         train = df_hist.iloc[:n_train]
         test = df_hist.iloc[n_train:n_train + n_test]
+
         exog_test = test[exog_cols].astype(float) if exog_cols else None
 
         order, seas = _select_params(req, df_hist, exog_cols, y_col, n_test, use_fourier)

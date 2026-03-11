@@ -14,12 +14,17 @@ app_ui = ui.page_fluid(
     # Styled App Header
     ui.div(
         ui.div(
-            ui.img(src="images/logo_sicuma.png", height="60px", class_="logo-img"),
+            ui.div(
+                ui.img(src="images/logo_sicuma.png", height="60px", class_="logo-img logo-sicuma"),
+                ui.img(src="images/logo_iatur.png", height="60px", class_="logo-img logo-iatur"),
+                class_="header-logos"
+            ),
             ui.h1(get_config("frontend.shiny.title")),
             class_="app-header-content"
         ),
         class_="app-header"
     ),
+    ui.output_ui("landing_page"),
     ui.output_ui("home_blocks"),
     ui.output_ui("selected_module"),
 )
@@ -31,29 +36,76 @@ def server(input, output, session):
     escenarios_server("escenarios")
     #carga_generacion_server("carga_generacion")
 
-    selected_module_rv = reactive.Value(None)
+    # "landing" = landing page, "home" = module selection, "predicciones"/"escenarios" = module
+    current_view = reactive.Value("landing")
+
+    @reactive.Effect
+    @reactive.event(input.btn_comenzar)
+    def _comenzar():
+        current_view.set("home")
 
     @reactive.Effect
     @reactive.event(input.open_predicciones)
     def _open_predicciones():
-        selected_module_rv.set("predicciones")
+        current_view.set("predicciones")
 
     @reactive.Effect
     @reactive.event(input.open_escenarios)
     def _open_escenarios():
-        selected_module_rv.set("escenarios")
+        current_view.set("escenarios")
 
     @reactive.Effect
     @reactive.event(input.back_to_home)
     def _back_to_home():
-        selected_module_rv.set(None)
+        current_view.set("home")
+
+    @reactive.Effect
+    @reactive.event(input.back_to_landing)
+    def _back_to_landing():
+        current_view.set("landing")
+
+    @output
+    @render.ui
+    def landing_page():
+        if current_view.get() != "landing":
+            return ui.div()
+        return ui.div(
+            ui.div(
+                ui.div(
+                    ui.tags.div("\U0001f30d", style="font-size:4rem; margin-bottom:1rem;"),
+                    ui.h2(
+                        "Plataforma de Predicción y Análisis Turístico",
+                        class_="landing-title",
+                    ),
+                    ui.tags.p(
+                        "Bienvenido al sistema inteligente de predicción de demanda turística. "
+                        "Esta plataforma te permite generar pronósticos precisos utilizando modelos "
+                        "avanzados de machine learning, así como simular escenarios pasados y futuros "
+                        "modificando variables exógenas para analizar su impacto en la predicción.",
+                        class_="landing-description",
+                    ),
+                    
+                    ui.input_action_button(
+                        "btn_comenzar",
+                        ui.tags.span("Comenzar", style="margin-right:0.5rem;"),
+                        class_="btn-comenzar",
+                    ),
+                    class_="landing-card",
+                ),
+                class_="landing-container",
+            ),
+        )
 
     @output
     @render.ui
     def home_blocks():
-        if selected_module_rv.get() is not None:
+        if current_view.get() != "home":
             return ui.div()
         return ui.div(
+            ui.div(
+                ui.input_action_button("back_to_landing", "← Volver"),
+                class_="module-back-row",
+            ),
             ui.h3("¿Qué quieres hacer?", style="text-align:center; margin-bottom:8px;"),
             ui.tags.p(
                 "Selecciona el módulo con el que quieres trabajar",
@@ -67,7 +119,7 @@ def server(input, output, session):
                             ui.tags.div("\U0001f52e", style="font-size:2.5rem; margin-bottom:8px;"),
                             ui.tags.div("Predicciones", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
                             ui.tags.div(
-                                "Genera pronósticos con SARIMAX/XGBoost y compara métricas del modelo.",
+                                "Genera pronósticos con modelos de Machine Learning y compara métricas del modelo.",
                                 style="font-size:0.85rem; color:#64748b; font-weight:400;",
                             ),
                         ),
@@ -82,7 +134,7 @@ def server(input, output, session):
                             ui.tags.div("📈", style="font-size:2.5rem; margin-bottom:8px;"),
                             ui.tags.div("Escenarios", style="font-size:1.25rem; font-weight:700; margin-bottom:6px;"),
                             ui.tags.div(
-                                "Simula escenarios futuros modificando exógenas y analiza el impacto en la predicción.",
+                                "Simula escenarios pasados y futuros modificando variables predictoras y analiza el impacto en la predicción.",
                                 style="font-size:0.85rem; color:#64748b; font-weight:400;",
                             ),
                         ),
@@ -98,8 +150,8 @@ def server(input, output, session):
     @output
     @render.ui
     def selected_module():
-        sel = selected_module_rv.get()
-        if sel is None:
+        sel = current_view.get()
+        if sel not in ("predicciones", "escenarios"):
             return ui.div()
 
         if sel == "predicciones":
@@ -109,7 +161,7 @@ def server(input, output, session):
 
         return ui.div(
             ui.div(
-                ui.input_action_button("back_to_home", "← Volver"),
+                ui.input_action_button("back_to_home", " Inicio"),
                 class_="module-back-row",
             ),
             content,

@@ -61,6 +61,18 @@ def fmt(v) -> str:
     return s if s else "—"
 
 
+def fmt_num(value, decimals: int = 2, suffix: str = "") -> str:
+    """Formatea un número al estilo español: punto como separador de miles, coma decimal."""
+    try:
+        num = float(value)
+    except (ValueError, TypeError):
+        return str(value)
+    formatted = f"{num:,.{decimals}f}"          # e.g. "1,234.56"
+    # Swap: comma→placeholder, dot→comma, placeholder→dot
+    formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{formatted}{suffix}"
+
+
 def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
     """
     Formatea una fecha según la temporalidad.
@@ -592,12 +604,13 @@ def panel_styles() -> ui.tags.style:
         }
 
         .selection-pill {
-            padding: 6px 10px;
-            border-radius: 999px;
-            display: inline-block;
+            padding: 10px 16px;
+            border-radius: 12px;
+            display: block;
             background: #f6f8fa;
             border: 1px solid #d0d7de;
             margin-bottom: 8px;
+            width: fit-content;
         }
 
         /* Panel 2: tarjetas por variable */

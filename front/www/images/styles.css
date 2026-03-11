@@ -46,6 +46,80 @@ body {
   box-sizing: border-box;
 }
 
+/* ===== LANDING PAGE ===== */
+.landing-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 75vh;
+  padding: 2rem;
+  background-image: url('fondo_map.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-radius: 16px;
+}
+
+.landing-card {
+  max-width: 680px;
+  width: 100%;
+  text-align: center;
+  background: var(--bg-card);
+  border-radius: 20px;
+  padding: 3rem 2.5rem;
+  box-shadow: var(--shadow-xl);
+}
+
+.landing-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 1rem 0;
+}
+
+.landing-description {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0 0 2rem 0;
+}
+
+.landing-features {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+.landing-feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  background: var(--bg-app);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  flex: 1;
+  max-width: 260px;
+}
+
+.btn-comenzar {
+  background: linear-gradient(135deg, var(--primary) 0%, #6366f1 100%) !important;
+  color: white !important;
+  border: none !important;
+  padding: 0.85rem 2.5rem !important;
+  font-size: 1.1rem !important;
+  font-weight: 600 !important;
+  border-radius: 12px !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.btn-comenzar:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
 /* ===== WELCOME SCREEN ===== */
 .centered-container {
   display: flex;
@@ -639,9 +713,16 @@ input[type="checkbox"] {
   font-weight: 400;
 }
 
-.app-header .logo-img {
+.header-logos {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
   margin-bottom: 1rem;
-  filter: brightness(0) invert(1);
+}
+
+.app-header .logo-sicuma {
+  filter: brightness(0) invert(1) !important;
   opacity: 0.95;
 }
 

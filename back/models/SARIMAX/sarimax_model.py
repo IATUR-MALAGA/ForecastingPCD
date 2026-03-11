@@ -29,8 +29,8 @@ def create_sarimax_model(
         exog=exog,
         order=order,
         seasonal_order=seasonal_order,
-        enforce_invertibility=bool(settings.get("models.sarimax.enforce_invertibility", False)),
-        enforce_stationarity=bool(settings.get("models.sarimax.enforce_stationarity", False)),
+        enforce_invertibility=True,
+        enforce_stationarity=True,
     )
     results = model.fit()
     return results  # Devuelve el modelo entrenado con train
@@ -61,7 +61,8 @@ def best_sarimax_params(
     D_values = settings.get("models.sarimax.auto_search.D_values", [0, 2])
     Q_values = settings.get("models.sarimax.auto_search.Q_values", [0, 2])
 
-    df = df.iloc[:-periodos_a_predecir]
+    if periodos_a_predecir > 0 and periodos_a_predecir < len(df):
+        df = df.iloc[:-periodos_a_predecir]
     y_train = df[column_y]
     x_train = df[exog_cols] if exog_cols else None
     if x_train is not None and x_train.empty:
@@ -70,6 +71,12 @@ def best_sarimax_params(
     p_min, p_max = min(p_values), max(p_values)
     q_min, q_max = min(q_values), max(q_values)
     max_d = max(d_values)
+
+    # auto_arima needs at least 2*m observations for seasonal differencing tests;
+    # fall back to non-seasonal if the series is too short.
+    min_obs_for_seasonal = 2 * s + 1
+    if seasonal and len(y_train) < min_obs_for_seasonal:
+        seasonal = False
 
     if not seasonal:
         P_min = P_max = 0

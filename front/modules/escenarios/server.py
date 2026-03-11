@@ -19,6 +19,7 @@ from front.utils.utils import (
     create_calendar_filter,
     detect_temporal_filters,
     fmt as _fmt,
+    fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
     panel_styles,
@@ -323,7 +324,7 @@ def escenarios_server(input, output, session):
 
         panels = []
         for cat, names in grouped.items():
-            btns = []
+            blocks = []
             for name in names:
                 btn_id = stable_id("esc_target", name)
 
@@ -338,27 +339,94 @@ def escenarios_server(input, output, session):
                         scenario_res_rv.set(None)
                         base_info_rv.set(None)
 
-                btns.append(
-                    ui.input_action_button(
-                        btn_id,
-                        name,
-                        class_=(
-                            "var-pick is-selected" if selected == name else "var-pick"
+                meta = cache.get_meta(name)
+                temporalidad = _fmt(meta.get("temporalidad"))
+                granularidad = _fmt(meta.get("granularidad"))
+                unidad_medida = _fmt(meta.get("unidad_medida"))
+                fuente = _fmt(meta.get("fuente"))
+                descripcion = _fmt(meta.get("descripcion"))
+
+                blocks.append(
+                    ui.tags.div(
+                        ui.tags.div(
+                            ui.input_action_button(
+                                btn_id,
+                                name,
+                                class_=(
+                                    "var-pick is-selected" if selected == name else "var-pick"
+                                ),
+                            ),
+                            style="display: flex; align-items: baseline; gap: 6px;",
                         ),
+                        ui.tags.details(
+                            ui.tags.summary(
+                                "Ver más",
+                                style="cursor: pointer; margin-top: 6px; font-size: 0.9em; color: #666;",
+                            ),
+                            ui.tags.div(
+                                ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Temporalidad: "),
+                                        temporalidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Granularidad: "),
+                                        granularidad,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Unidad medida: "),
+                                        unidad_medida,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Fuente: "),
+                                        fuente,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                    ui.tags.div(
+                                        ui.tags.strong("Descripción: "),
+                                        descripcion,
+                                        style="margin-bottom: 8px;",
+                                    ),
+                                ),
+                                style="margin-top: 8px; padding: 8px 0;",
+                            ),
+                        ),
+                        class_="var-item",
                     )
                 )
 
             panels.append(
                 ui.accordion_panel(
                     cat,
-                    ui.div(*btns, class_="var-list"),
+                    ui.div(*blocks),
                     value=_slug(cat),
                 )
             )
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 1: Seleccionar variable objetivo"),
+            ui.div(
+                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Seleccionar variable objetivo",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+                ),
+                ui.tags.p(
+                    "Elige la variable que deseas predecir. Esta será la variable dependiente "
+                    "del modelo, es decir, el valor que los algoritmos intentarán estimar a partir "
+                    "de las variables predictoras que selecciones en el siguiente paso.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
+            ),
+            ui.div(
+                ui.tags.span("\u2705 Seleccionada: ", style="font-weight:600;"),
+                ui.tags.span(selected or "—"),
+                class_="selection-pill",
+            ),
             ui.accordion(*panels, id="esc_acc_target", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("esc_prev_1", "← Anterior"),
@@ -534,7 +602,20 @@ def escenarios_server(input, output, session):
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 2: Seleccionar exógenas"),
+            ui.div(
+                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Seleccionar variables predictoras",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+                ),
+                ui.tags.p(
+                    "Elige las variables exógenas que alimentarán el modelo. Solo se pueden "
+                    "seleccionar aquellas que sean compatibles en temporalidad y rango con la "
+                    "variable objetivo elegida en el paso anterior.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
+            ),
             ui.accordion(*panels, id="esc_acc_preds", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("esc_prev_2", "← Anterior"),
@@ -713,96 +794,28 @@ def escenarios_server(input, output, session):
                 ui.p("No hay variables seleccionadas para configurar."),
             )
 
-        panels = []
-
         target_var = target_var_rv.get()
         target_start, target_end = target_selected_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
-        display_start = (
-            target_start
-            if target_start
-            else (cache.get_date_range(target_var)[0] if target_var else None)
-        )
-        display_end = (
-            target_end
-            if target_end
-            else (cache.get_date_range(target_var)[1] if target_var else None)
-        )
-
-        target_start_fmt = (
-            _fmt_date_temp(display_start, target_temporality) if display_start else "—"
-        )
-        target_end_fmt = (
-            _fmt_date_temp(display_end, target_temporality) if display_end else "—"
-        )
-
-        range_status = "disponible" if target_start else "disponible"
-        for item in vars_sel:
+        # --- Build body for each variable ---
+        def _var_body(item):
             pretty = item["pretty"]
             table = item["table"]
-            is_target = item["is_target"]
-
+            is_target = item.get("is_target", False)
             filtros = cache.get_filters(table)
-
-            start_date, end_date = cache.get_date_range(pretty)
 
             if not filtros:
                 if is_target:
-                    body = ui.p(
+                    return ui.p(
                         "Sin filtros configurados en tbl_admin_filtros para esta variable/tabla."
                     )
                 else:
-                    body = ui.div(
-                        ui.tags.div(
-                            ui.tags.span(
-                                "📌 Variable Exógena",
-                                style="font-weight:600; color:#6e7781;",
-                            ),
-                            style="margin-bottom:12px;",
-                        ),
-                        ui.tags.div(
-                            "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
-                            style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px;",
-                        ),
-                        ui.tags.div(
-                            ui.tags.span(
-                                f"Rango {range_status}: ",
-                                style="font-weight:500; margin-top:8px; display:inline-block;",
-                            ),
-                            ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                            style="margin-top:8px;",
-                        ),
-                    )
+                    return ui.div()
             else:
                 controls = []
 
-                if not is_target:
-                    # Para las exógenas, mostrar mensaje informativo
-                    controls.append(
-                        ui.tags.div(
-                            ui.tags.div(
-                                ui.tags.span(
-                                    "📌 Variable Exógena",
-                                    style="font-weight:600; color:#6e7781;",
-                                ),
-                                style="margin-bottom:12px;",
-                            ),
-                            ui.tags.div(
-                                "✓ Esta variable se ajustará automáticamente al rango temporal de la variable objetivo.",
-                                style="padding:8px; background-color:#dff6dd; border-left:3px solid #1a7f37; color:#1a7f37; border-radius:4px; margin-bottom:12px;",
-                            ),
-                            ui.tags.div(
-                                ui.tags.span(
-                                    f"Rango {range_status}: ", style="font-weight:500;"
-                                ),
-                                ui.tags.span(f"{target_start_fmt} → {target_end_fmt}"),
-                                style="margin-bottom:16px;",
-                            ),
-                            style="margin-bottom:16px;",
-                        )
-                    )
                 for f in filtros:
                     col_lower = f["col"].lower().strip()
                     if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
@@ -847,28 +860,107 @@ def escenarios_server(input, output, session):
                         )
                     )
 
-                body = (
+                return (
                     ui.div(*controls) if controls else ui.p("Sin filtros disponibles.")
                 )
 
-            panels.append(
-                ui.accordion_panel(
-                    pretty,
-                    body,
-                    value=_slug(table),
+        # --- Separate target vs predictors ---
+        target_item = None
+        predictor_items = []
+        for item in vars_sel:
+            if item.get("is_target"):
+                target_item = item
+            else:
+                predictor_items.append(item)
+
+        # Target box
+        target_box_content = (
+            ui.div(
+                ui.tags.div(
+                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    style="margin-bottom:8px;",
+                ),
+                _var_body(target_item),
+            )
+            if target_item
+            else ui.p("No se ha seleccionado variable objetivo.")
+        )
+
+        target_box = ui.tags.div(
+            ui.tags.div(
+                "🎯 Variable objetivo",
+                style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
+            ),
+            target_box_content,
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+            ),
+        )
+
+        # Predictors box
+        if predictor_items:
+            pred_panels = []
+            for item in predictor_items:
+                pred_panels.append(
+                    ui.accordion_panel(
+                        ui.tags.strong(item["pretty"]),
+                        _var_body(item),
+                        value=_slug(item["table"]),
+                    )
                 )
+
+            predictors_box = ui.tags.div(
+                ui.tags.div(
+                    "📊 Variables predictoras",
+                    ui.tooltip(
+                        ui.tags.span(
+                            ui.HTML(ICON_SVG_INFO),
+                        ),
+                        "Cada variable predictora se ajustará automáticamente al rango temporal de la variable objetivo.",
+                    ),
+                    style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
+                ),
+                ui.accordion(*pred_panels, id="esc_acc_filters_preds", open=True, multiple=True),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+                ),
+            )
+        else:
+            predictors_box = ui.tags.div(
+                ui.tags.div(
+                    "📊 Variables predictoras",
+                    style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
+                ),
+                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
+                ),
             )
 
         return ui.div(
             PANEL_STYLES,
-            ui.h3("Panel 3: configurar filtros"),
-            ui.tags.ul(
-                ui.tags.li("Para cada variable se muestran sus filtros configurados."),
-                ui.tags.li(
-                    "En exógenas, el rango temporal se ajusta automáticamente al rango elegido en la variable objetivo."
+            ui.div(
+                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.h3(
+                    "Configurar filtros",
+                    style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
                 ),
+                ui.tags.p(
+                    "Para cada variable se muestran sus filtros configurados. "
+                    "En exógenas, el rango temporal se ajusta automáticamente al rango "
+                    "elegido en la variable objetivo.",
+                    style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
+                ),
+                style="text-align:center; margin-bottom:1rem;",
             ),
-            ui.accordion(*panels, id="acc_filters", open=True, multiple=True),
+            ui.tags.div(
+                target_box,
+                predictors_box,
+                style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;",
+            ),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
                 ui.input_action_button("btn_next_3", "Siguiente →"),
@@ -1417,7 +1509,9 @@ def escenarios_server(input, output, session):
             return render.DataGrid(pd.DataFrame())
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
-            df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").round(4)
+            df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
+                lambda v: fmt_num(v, 4) if pd.notna(v) else v
+            )
         return render.DataGrid(df)
 
     # ------------------------
@@ -1548,6 +1642,7 @@ def escenarios_server(input, output, session):
     # =====================================================================
 
     past_scenario_err_rv = reactive.Value(None)
+    saved_past_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados (pasado)
 
     def _past_cell_id(exog_name: str, k: int) -> str:
         return stable_id("esc_past_val", f"{exog_name}__P{k}")
@@ -1644,6 +1739,30 @@ def escenarios_server(input, output, session):
             out[ex] = row
         return out
 
+    def _save_past_cells():
+        """Guarda valores actuales de celdas pasadas en saved_past_cell_values_rv."""
+        with reactive.isolate():
+            exogs = list(past_exogs())
+            dates = past_window_dates()
+            saved = dict(saved_past_cell_values_rv.get())
+        for ex in exogs:
+            for k in range(1, len(dates) + 1):
+                cid = _past_cell_id(ex, k)
+                if cid in input:
+                    v = input[cid]()
+                    if v is not None:
+                        saved[cid] = v
+        saved_past_cell_values_rv.set(saved)
+
+    @reactive.Effect
+    def _save_past_cells_before_exog_toggle():
+        if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
+            return
+        if "esc_past_active_exogs" not in input:
+            return
+        _ = input.esc_past_active_exogs()
+        _save_past_cells()
+
     # --- Exog selector (past) ---
 
     @output
@@ -1722,6 +1841,8 @@ def escenarios_server(input, output, session):
                     ),
                 )
             )
+        _cell_saved = saved_past_cell_values_rv.get()
+
         body_rows = []
         for ex in exogs:
             cells = [
@@ -1735,9 +1856,10 @@ def escenarios_server(input, output, session):
             ]
             for k in range(1, h + 1):
                 cid = _past_cell_id(ex, k)
+                _init_val = _cell_saved.get(cid, None)
                 cells.append(
                     ui.tags.td(
-                        ui.input_numeric(cid, label="", value=None, step=0.01),
+                        ui.input_numeric(cid, label="", value=_init_val, step=0.01),
                         style="min-width:120px;",
                     )
                 )
@@ -1768,158 +1890,183 @@ def escenarios_server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.esc_past_calc)
-    def _compute_past_scenario():
+    async def _compute_past_scenario():
         if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
             return
         if int(input.esc_past_calc() or 0) == 0:
             return
 
-        past_scenario_err_rv.set("Calculando…")
+        past_scenario_err_rv.set(None)
         scenario_res_rv.set(None)
 
-        try:
-            target = target_var_rv.get()
-            exogs = past_active_exogs()
-            model = past_model()
-            filters = selected_filters_by_var()
-            ws, we = past_window_range()
-            dates = past_window_dates()
+        # Guardar valores de celdas antes de calcular
+        _save_past_cells()
 
-            if not target:
-                past_scenario_err_rv.set("No hay variable objetivo seleccionada.")
-                return
-            if not ws or not we:
-                past_scenario_err_rv.set("Selecciona un rango de fechas.")
-                return
-            if dates.empty:
-                past_scenario_err_rv.set(
-                    "El rango de fechas seleccionado no genera periodos."
-                )
-                return
+        target = target_var_rv.get()
+        exogs = past_active_exogs()
+        model = past_model()
+        filters = selected_filters_by_var()
+        ws, we = past_window_range()
+        dates = past_window_dates()
 
-            # Build overrides: only for cells with a value entered
-            mat = past_matrix_values()
-            overrides = []
-            for ex in exogs:
-                vals = mat.get(ex, [])
-                for k, v in enumerate(vals):
-                    if v is not None:
-                        date_str = pd.to_datetime(dates[k]).strftime("%Y-%m-%d")
-                        overrides.append(
-                            {
-                                "var": ex,
-                                "op": "set",
-                                "value": float(v),
-                                "start": date_str,
-                                "end": date_str,
-                            }
-                        )
+        if not target:
+            past_scenario_err_rv.set("No hay variable objetivo seleccionada.")
+            return
+        if not ws or not we:
+            past_scenario_err_rv.set("Selecciona un rango de fechas.")
+            return
+        if dates.empty:
+            past_scenario_err_rv.set(
+                "El rango de fechas seleccionado no genera periodos."
+            )
+            return
 
-            runner = MODEL_RUNNERS.get(model)
-            if runner is None:
-                past_scenario_err_rv.set(f"Modelo no soportado: {model}")
-                return
+        # Build overrides: only for cells with a value entered
+        mat = past_matrix_values()
+        overrides = []
+        for ex in exogs:
+            vals = mat.get(ex, [])
+            for k, v in enumerate(vals):
+                if v is not None:
+                    date_str = pd.to_datetime(dates[k]).strftime("%Y-%m-%d")
+                    overrides.append(
+                        {
+                            "var": ex,
+                            "op": "set",
+                            "value": float(v),
+                            "start": date_str,
+                            "end": date_str,
+                        }
+                    )
 
-            # Normalize window dates to match past_window_dates() logic
-            temp = target_temporalidad()
-            ws_dt = pd.to_datetime(ws, errors="coerce")
-            we_dt = pd.to_datetime(we, errors="coerce")
-            if _is_monthly(temp):
-                ws_dt = ws_dt.to_period("M").to_timestamp(how="start")
-                we_dt = we_dt.to_period("M").to_timestamp(how="end")
-            else:
-                ws_dt = ws_dt.normalize()
-                we_dt = we_dt.normalize()
-            ws_str = ws_dt.strftime("%Y-%m-%d")
-            we_str = we_dt.strftime("%Y-%m-%d")
+        runner = MODEL_RUNNERS.get(model)
+        if runner is None:
+            past_scenario_err_rv.set(f"Modelo no soportado: {model}")
+            return
 
-            payload = {
-                "target_var": target,
-                "predictors": list(exogs),
-                "filters_by_var": filters,
-                "train_ratio": 0.70,
-                "auto_params": True,
-                "return_df": True,
-                "horizon": len(dates),
-                "scenario_mode": "past",
-                "scenario_window": {"start": ws_str, "end": we_str},
-                "scenario_overrides": overrides,
-                "scenario_future_values": [],
-            }
+        # Normalize window dates to match past_window_dates() logic
+        temp = target_temporalidad()
+        ws_dt = pd.to_datetime(ws, errors="coerce")
+        we_dt = pd.to_datetime(we, errors="coerce")
+        if _is_monthly(temp):
+            ws_dt = ws_dt.to_period("M").to_timestamp(how="start")
+            we_dt = we_dt.to_period("M").to_timestamp(how="end")
+        else:
+            ws_dt = ws_dt.normalize()
+            we_dt = we_dt.normalize()
+        ws_str = ws_dt.strftime("%Y-%m-%d")
+        we_str = we_dt.strftime("%Y-%m-%d")
 
-            if model == "sarimax":
-                payload.update({"s": 12})
-            elif model == "xgboost":
-                payload.update(
-                    {
-                        "use_target_lags": True,
-                        "max_lag": 12,
-                        "recursive_forecast": True,
-                    }
-                )
+        payload = {
+            "target_var": target,
+            "predictors": list(exogs),
+            "filters_by_var": filters,
+            "train_ratio": 0.70,
+            "auto_params": True,
+            "return_df": True,
+            "horizon": len(dates),
+            "scenario_mode": "past",
+            "scenario_window": {"start": ws_str, "end": we_str},
+            "scenario_overrides": overrides,
+            "scenario_future_values": [],
+        }
 
-            resp = runner(payload)
-
-            df_resp = pd.DataFrame(resp.get("df") or [])
-            if df_resp.empty:
-                past_scenario_err_rv.set("El backend devolvió un dataframe vacío.")
-                return
-
-            y_col = resp["y_col"]
-            y_forecast = list(resp.get("y_forecast") or [])
-            y_true = list(resp.get("y_true") or [])
-            horizon_resp = int(resp.get("horizon", len(dates)))
-
-            # Build prediction index from the selected dates
-            pred_index = dates
-            m = min(len(y_forecast), len(pred_index))
-            y_forecast = y_forecast[:m]
-            pred_index = pred_index[:m]
-            if y_true:
-                y_true = y_true[:m]
-
-            pred_series = pd.Series(y_forecast, index=pred_index, name="Prediction")
-
-            fig = plot_predictions(
-                df=df_resp,
-                pred=pred_series,
-                title=f"Escenario pasado ({model.upper()})",
-                ylabel="Valores",
-                xlabel="Fecha",
-                column_y=y_col,
-                periodos_a_predecir=horizon_resp,
-                holidays_col=None,
+        if model == "sarimax":
+            payload.update({"s": 12})
+        elif model == "xgboost":
+            payload.update(
+                {
+                    "use_target_lags": True,
+                    "max_lag": 12,
+                    "recursive_forecast": True,
+                }
             )
 
-            temp = target_temporalidad()
-            date_fmt = "%m-%Y" if _is_monthly(temp) else "%d-%m-%Y"
-            results_data: dict = {
-                "Fecha": [d.strftime(date_fmt) for d in pred_index],
-                "Predicción": y_forecast,
-            }
-            if y_true:
-                results_data["Valor real"] = y_true
+        # Insertar spinner
+        _spinner_id = _SPINNER_ID
+        ui.insert_ui(
+            ui.tags.div(
+                ui.tags.div(class_="graph-spinner"),
+                ui.tags.div("Calculando escenario...", class_="graph-loading-text"),
+                class_="graph-loading-container",
+                id=_spinner_id,
+            ),
+            selector="#esc_past_result_area",
+            where="afterBegin",
+            immediate=True,
+        )
 
-            pred_df = pd.DataFrame(results_data)
+        try:
 
-            # Add difference and percentage columns (Predicción - Valor real)
-            if "Valor real" in pred_df.columns and "Predicción" in pred_df.columns:
-                real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
-                pred = pd.to_numeric(pred_df["Predicción"], errors="coerce")
-                pred_df["Diferencia"] = (pred - real).round(4)
-                pred_df["% Diferencia"] = (
-                    ((pred - real) / real.replace(0, float("nan"))) * 100
-                ).round(2)
+            def _run_past_scenario():
+                resp = runner(payload)
 
-            scenario_res_rv.set(
-                {
+                df_resp = pd.DataFrame(resp.get("df") or [])
+                if df_resp.empty:
+                    return None, "El backend devolvió un dataframe vacío."
+
+                y_col = resp["y_col"]
+                y_forecast = list(resp.get("y_forecast") or [])
+                y_true = list(resp.get("y_true") or [])
+                horizon_resp = int(resp.get("horizon", len(dates)))
+
+                # Build prediction index from the selected dates
+                pred_index = dates
+                m = min(len(y_forecast), len(pred_index))
+                y_forecast = y_forecast[:m]
+                pred_index = pred_index[:m]
+                if y_true:
+                    y_true = y_true[:m]
+
+                pred_series = pd.Series(y_forecast, index=pred_index, name="Prediction")
+
+                fig = plot_predictions(
+                    df=df_resp,
+                    pred=pred_series,
+                    title=f"Escenario pasado ({model.upper()})",
+                    ylabel="Valores",
+                    xlabel="Fecha",
+                    column_y=y_col,
+                    periodos_a_predecir=horizon_resp,
+                    holidays_col=None,
+                )
+
+                temp_inner = target_temporalidad()
+                date_fmt = "%m-%Y" if _is_monthly(temp_inner) else "%d-%m-%Y"
+                results_data: dict = {
+                    "Fecha": [d.strftime(date_fmt) for d in pred_index],
+                    "Predicción": y_forecast,
+                }
+                if y_true:
+                    results_data["Valor real"] = y_true
+
+                pred_df = pd.DataFrame(results_data)
+
+                # Add difference and percentage columns (Predicción - Valor real)
+                if "Valor real" in pred_df.columns and "Predicción" in pred_df.columns:
+                    real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
+                    pred = pd.to_numeric(pred_df["Predicción"], errors="coerce")
+                    pred_df["Diferencia"] = (pred - real).apply(
+                        lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                    )
+                    pred_df["% Diferencia"] = (
+                        ((pred - real) / real.replace(0, float("nan"))) * 100
+                    ).apply(lambda v: fmt_num(v, 2, "%") if pd.notna(v) else v)
+
+                return {
                     "model": model,
                     "fig": fig,
                     "pred_df": pred_df,
                     "mode": "past",
-                }
-            )
-            past_scenario_err_rv.set(None)
+                }, None
+
+            result, err_msg = await asyncio.to_thread(_run_past_scenario)
+
+            if result is None:
+                past_scenario_err_rv.set(err_msg or "Error desconocido.")
+            else:
+                scenario_res_rv.set(result)
+                past_scenario_err_rv.set(None)
 
         except httpx.HTTPStatusError as exc:
             try:
@@ -1929,6 +2076,8 @@ def escenarios_server(input, output, session):
             past_scenario_err_rv.set(f"Error backend: {detail}")
         except Exception as e:
             past_scenario_err_rv.set(f"Error: {type(e).__name__}: {e}")
+        finally:
+            ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
 
     # --- Outputs (past) ---
 
@@ -1949,7 +2098,9 @@ def escenarios_server(input, output, session):
         df = res["pred_df"].copy()
         for col in ["Predicción", "Valor real"]:
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
+                df[col] = pd.to_numeric(df[col], errors="coerce").apply(
+                    lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                )
 
         # Build HTML table with color-coded Diferencia and % Diferencia
         header_cells = [
@@ -1969,7 +2120,7 @@ def escenarios_server(input, output, session):
                         color = "#dc2626" if num < 0 else "#16a34a"
                         style += f" color:{color}; font-weight:600;"
                         if col == "% Diferencia":
-                            val = f"{num:.2f}%"
+                            val = fmt_num(num, 2, "%")
                     except (ValueError, TypeError):
                         pass
                 cells.append(ui.tags.td(str(val), style=style))
@@ -2013,9 +2164,6 @@ def escenarios_server(input, output, session):
         else:
             default_start = (max_dt - pd.Timedelta(days=30)).date()
         default_start = max(min_date, default_start)
-
-        res = scenario_res_rv.get()
-        err = past_scenario_err_rv.get()
 
         # --- 1) Date range selector (using create_calendar_filter) ---
         table = _past_target_table()
@@ -2094,7 +2242,30 @@ def escenarios_server(input, output, session):
             style="padding:14px; border-radius:14px; margin-top:12px;",
         )
 
-        # --- Status ---
+        footer = ui.tags.div(
+            ui.input_action_button("esc_prev_pasado", "← Anterior"),
+            style="margin-top:12px;",
+        )
+
+        return ui.div(
+            PANEL_STYLES,
+            date_range_card,
+            ui.output_ui("esc_past_exog_selector"),
+            ui.output_ui("esc_past_exog_table"),
+            model_box,
+            ui.tags.div(
+                ui.output_ui("esc_past_status_results"),
+                id="esc_past_result_area",
+            ),
+            footer,
+        )
+
+    @output
+    @render.ui
+    def esc_past_status_results():
+        res = scenario_res_rv.get()
+        err = past_scenario_err_rv.get()
+
         status = ui.div()
         if err:
             status = ui.tags.div(
@@ -2120,7 +2291,6 @@ def escenarios_server(input, output, session):
                 ),
             )
 
-        # --- Results ---
         outputs = ui.div()
         if res is not None and res.get("mode") == "past":
             outputs = ui.tags.div(
@@ -2149,21 +2319,7 @@ def escenarios_server(input, output, session):
                 ),
             )
 
-        footer = ui.tags.div(
-            ui.input_action_button("esc_prev_pasado", "← Anterior"),
-            style="margin-top:12px;",
-        )
-
-        return ui.div(
-            PANEL_STYLES,
-            date_range_card,
-            ui.output_ui("esc_past_exog_selector"),
-            ui.output_ui("esc_past_exog_table"),
-            model_box,
-            status,
-            outputs,
-            footer,
-        )
+        return ui.div(status, outputs)
 
     @reactive.Effect
     @reactive.event(input.esc_prev_pasado)
