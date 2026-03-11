@@ -1,9 +1,13 @@
 import asyncio
-import tempfile
 import pandas as pd
+import plotly.graph_objects as go
 from shiny import module, reactive, render, ui
 import httpx
-from back.models.utils.models_graph import plot_predictions
+from back.models.utils.models_graph import (
+    build_interactive_plot_html,
+    compute_time_axis_bounds,
+    ensure_datetime_index,
+)
 from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
     get_tableName_for_variable,
@@ -90,6 +94,260 @@ def escenarios_server(input, output, session):
                 errors="coerce",
             )
         return pd.to_datetime(df.index, errors="coerce")
+
+    def _build_table_html(df: pd.DataFrame, signed_cols: tuple[str, ...] = ()) -> ui.Tag:
+        header_cells = [
+            ui.tags.th(
+                c,
+                style="padding:6px 10px; border-bottom:2px solid #e5e7eb; text-align:left;",
+            )
+            for c in df.columns
+        ]
+        rows = []
+        for _, row in df.iterrows():
+            cells = []
+            for col in df.columns:
+                val = row[col]
+                style = "padding:6px 10px; border-bottom:1px solid #f0f0f0;"
+                if col in signed_cols:
+                    try:
+                        num = float(str(val).replace("%", ""))
+                        color = "#dc2626" if num < 0 else "#16a34a" if num > 0 else "#475569"
+                        style += f" color:{color}; font-weight:600;"
+                    except (TypeError, ValueError):
+                        pass
+                cells.append(ui.tags.td("" if pd.isna(val) else str(val), style=style))
+            rows.append(ui.tags.tr(*cells))
+
+        return ui.tags.div(
+            ui.tags.table(
+                ui.tags.thead(ui.tags.tr(*header_cells)),
+                ui.tags.tbody(*rows),
+                style="border-collapse:collapse; width:100%; font-size:0.9rem;",
+            ),
+            style="overflow:auto; max-height:420px;",
+        )
+
+    def _signed_fmt(value, digits: int = 4, suffix: str = "") -> str:
+        if value is None or pd.isna(value):
+            return ""
+        prefix = "+" if float(value) > 0 else ""
+        return f"{prefix}{fmt_num(float(value), digits, suffix)}"
+
+    def _build_future_plot(df, pred, title, ylabel, xlabel, column_y, trace_name):
+        df_plot = ensure_datetime_index(df)
+        pred_index = pd.to_datetime(pred.index, errors="coerce")
+        pred_series = pd.Series(pred.values, index=pred_index, name=trace_name)
+        pred_series = pred_series[~pd.isna(pred_series.index)]
+
+        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        x_min, x_max = compute_time_axis_bounds(all_index)
+        customdata = [
+            [ts.strftime("%d-%m-%Y"), None, fmt_num(val, 4), None, None, trace_name.lower()]
+            for ts, val in zip(pred_series.index, pred_series.values)
+        ]
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df_plot.index,
+                y=df_plot[column_y],
+                mode="lines",
+                name="Real",
+                line={"color": "#2563eb", "width": 2},
+                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=pred_series.index,
+                y=pred_series.values,
+                mode="lines+markers",
+                name=trace_name,
+                line={"color": "#e11d48", "width": 3},
+                marker={"color": "#e11d48", "size": 9},
+                customdata=customdata,
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>{trace_name}: %{{y:,.4f}}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title=title,
+            margin={"l": 50, "r": 20, "t": 60, "b": 50},
+            hovermode="closest",
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#ffffff",
+            legend={"orientation": "h", "y": 1.08, "x": 0.01},
+            xaxis={
+                "title": xlabel,
+                "range": [x_min, x_max],
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+            yaxis={
+                "title": ylabel,
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+        )
+        return fig
+
+    def _build_past_plot(
+        df,
+        pred,
+        title,
+        ylabel,
+        xlabel,
+        column_y,
+        window_end,
+        actual_values=None,
+    ):
+        df_plot = ensure_datetime_index(df)
+        pred_index = pd.to_datetime(pred.index, errors="coerce")
+        pred_series = pd.Series(pred.values, index=pred_index, name="Escenario")
+        pred_series = pred_series[~pd.isna(pred_series.index)]
+        if actual_values is not None:
+            actual_on_pred = pd.Series(
+                pd.to_numeric(list(actual_values)[: len(pred_series)], errors="coerce"),
+                index=pred_series.index,
+                name="Valor real",
+            )
+        else:
+            real_series = pd.to_numeric(df_plot[column_y], errors="coerce")
+            if real_series.index.has_duplicates:
+                real_series = real_series.groupby(level=0).mean()
+            actual_on_pred = real_series.reindex(pred_series.index)
+
+        modified_mask = pred_series.index <= pd.to_datetime(window_end, errors="coerce")
+        impact_mask = pred_series.index > pd.to_datetime(window_end, errors="coerce")
+
+        def _customdata(segment_series, actual, segment_name):
+            diff = segment_series - actual
+            diff_pct = ((segment_series - actual) / actual.replace(0, float("nan"))) * 100
+            return [
+                [
+                    ts.strftime("%d-%m-%Y"),
+                    fmt_num(real, 4) if pd.notna(real) else "",
+                    fmt_num(pred_val, 4),
+                    _signed_fmt(diff_val, 4),
+                    _signed_fmt(diff_pct_val, 2, "%"),
+                    segment_name,
+                ]
+                for ts, real, pred_val, diff_val, diff_pct_val in zip(
+                    segment_series.index,
+                    actual.values,
+                    segment_series.values,
+                    diff.values,
+                    diff_pct.values,
+                )
+            ]
+
+        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        x_min, x_max = compute_time_axis_bounds(all_index)
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df_plot.index,
+                y=df_plot[column_y],
+                mode="lines",
+                name="Valor real",
+                line={"color": "#2563eb", "width": 2},
+                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+            )
+        )
+
+        modified_series = pred_series[modified_mask]
+        modified_actual = actual_on_pred[modified_mask]
+        if not modified_series.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=modified_series.index,
+                    y=modified_series.values,
+                    mode="lines+markers",
+                    name="Escenario modificado",
+                    line={"color": "#f97316", "width": 3},
+                    marker={"color": "#f97316", "size": 9},
+                    customdata=_customdata(modified_series, modified_actual, "modificado"),
+                    hovertemplate=(
+                        "Fecha: %{x|%d-%m-%Y}<br>"
+                        "Escenario: %{customdata[2]}<br>"
+                        "Valor real: %{customdata[1]}<br>"
+                        "% Diferencia: %{customdata[4]}"
+                        "<extra></extra>"
+                    ),
+                )
+            )
+
+        impact_series = pred_series[impact_mask]
+        impact_actual = actual_on_pred[impact_mask]
+        if not modified_series.empty and not impact_series.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=[modified_series.index[-1], impact_series.index[0]],
+                    y=[modified_series.iloc[-1], impact_series.iloc[0]],
+                    mode="lines",
+                    name="Conexión impacto",
+                    line={"color": "#7c3aed", "width": 3},
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+        if not impact_series.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=impact_series.index,
+                    y=impact_series.values,
+                    mode="lines+markers",
+                    name="Impacto posterior",
+                    line={"color": "#7c3aed", "width": 3},
+                    marker={"color": "#7c3aed", "size": 8},
+                    customdata=_customdata(impact_series, impact_actual, "posterior"),
+                    hovertemplate=(
+                        "Fecha: %{x|%d-%m-%Y}<br>"
+                        "Escenario: %{customdata[2]}<br>"
+                        "Valor real: %{customdata[1]}<br>"
+                        "% Diferencia: %{customdata[4]}"
+                        "<extra></extra>"
+                    ),
+                )
+            )
+
+        fig.update_layout(
+            title=title,
+            margin={"l": 50, "r": 20, "t": 60, "b": 50},
+            hovermode="closest",
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#ffffff",
+            legend={"orientation": "h", "y": 1.08, "x": 0.01},
+            xaxis={
+                "title": xlabel,
+                "range": [x_min, x_max],
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+            yaxis={
+                "title": ylabel,
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+        )
+        return fig
 
     # ---------------------------------------------------------------------
     # Temporalidad / normalización (mensual vs diario)
@@ -1448,7 +1706,7 @@ def escenarios_server(input, output, session):
                 if parsed is None:
                     return None
                 df, y_col, future, h2, pred_vals, pred_series = parsed
-                fig = plot_predictions(
+                fig = _build_future_plot(
                     df=df,
                     pred=pred_series,
                     title=(
@@ -1459,8 +1717,7 @@ def escenarios_server(input, output, session):
                     ylabel="Valores",
                     xlabel="Fecha",
                     column_y=y_col,
-                    periodos_a_predecir=h2,
-                    holidays_col=None,
+                    trace_name="Escenario",
                 )
                 pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
                 return {"model": model, "fig": fig, "pred_df": pred_df}
@@ -1486,33 +1743,57 @@ def escenarios_server(input, output, session):
     # Outputs
     # ------------------------
     @output
-    @render.image(delete_file=True)
+    @render.ui
     def esc_fut_plot():
         res = scenario_res_rv.get()
         if not res or res.get("mode") == "past":
-            return {"src": "", "alt": "Sin resultados"}
+            return ui.div()
 
-        fig = res["fig"]
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            fig.savefig(tmp.name, dpi=100)
-            return {
-                "src": tmp.name,
-                "alt": "Escenario futuro",
-                "style": "width:100%; height:auto; display:block;",
-            }
+        return ui.HTML(
+            build_interactive_plot_html(
+                res["fig"],
+                session.ns("esc_fut_plot_widget"),
+                session.ns("esc_fut_plot_click"),
+            )
+        )
 
     @output
-    @render.data_frame
+    @render.ui
     def esc_fut_table():
         res = scenario_res_rv.get()
         if not res or res.get("mode") == "past" or res.get("pred_df") is None:
-            return render.DataGrid(pd.DataFrame())
+            return ui.div()
+
+        click = input.esc_fut_plot_click() if "esc_fut_plot_click" in input else None
+        if click and click.get("scenario") is not None:
+            detail_df = pd.DataFrame(
+                [
+                    {
+                        "Fecha": click.get("date_label") or "",
+                        "Escenario": click.get("scenario") or "",
+                    }
+                ]
+            )
+            return ui.tags.div(
+                ui.tags.div(
+                    "Punto seleccionado",
+                    style="font-weight:600; margin-bottom:8px;",
+                ),
+                _build_table_html(detail_df),
+            )
+
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
             df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
                 lambda v: fmt_num(v, 4) if pd.notna(v) else v
             )
-        return render.DataGrid(df)
+        return ui.tags.div(
+            ui.tags.div(
+                "Haz clic en un punto para ver su detalle.",
+                style="color:#6b7280; font-size:0.9rem; margin-bottom:8px;",
+            ),
+            _build_table_html(df),
+        )
 
     # ------------------------
     # UI Panel 4
@@ -1596,14 +1877,14 @@ def escenarios_server(input, output, session):
         if res is not None:
             outputs = ui.tags.div(
                 ui.card(
-                    ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                    ui.output_image("esc_fut_plot", width="100%", height="auto"),
+                    ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
+                    ui.output_ui("esc_fut_plot"),
                     style="padding:12px; border-radius:14px; flex:2 1 640px; min-width:520px;",
                 ),
                 ui.card(
-                    ui.h5("Valores predichos", style="margin:0 0 8px 0;"),
+                    ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
                     ui.tags.div(
-                        ui.output_data_frame("esc_fut_table"),
+                        ui.output_ui("esc_fut_table"),
                         style="max-height:420px; overflow:auto;",
                     ),
                     style="padding:12px; border-radius:14px; flex:1 1 420px; min-width:340px;",
@@ -2010,8 +2291,9 @@ def escenarios_server(input, output, session):
                 y_true = list(resp.get("y_true") or [])
                 horizon_resp = int(resp.get("horizon", len(dates)))
 
-                # Build prediction index from the selected dates
-                pred_index = dates
+                scenario_dates = pd.to_datetime(df_resp.get("__dt"), errors="coerce")
+                scenario_dates = scenario_dates[scenario_dates >= ws_dt]
+                pred_index = pd.DatetimeIndex(scenario_dates)
                 m = min(len(y_forecast), len(pred_index))
                 y_forecast = y_forecast[:m]
                 pred_index = pred_index[:m]
@@ -2020,38 +2302,33 @@ def escenarios_server(input, output, session):
 
                 pred_series = pd.Series(y_forecast, index=pred_index, name="Prediction")
 
-                fig = plot_predictions(
+                fig = _build_past_plot(
                     df=df_resp,
                     pred=pred_series,
                     title=f"Escenario pasado ({model.upper()})",
                     ylabel="Valores",
                     xlabel="Fecha",
                     column_y=y_col,
-                    periodos_a_predecir=horizon_resp,
-                    holidays_col=None,
+                    window_end=we_dt,
+                    actual_values=y_true,
                 )
 
                 temp_inner = target_temporalidad()
                 date_fmt = "%m-%Y" if _is_monthly(temp_inner) else "%d-%m-%Y"
                 results_data: dict = {
                     "Fecha": [d.strftime(date_fmt) for d in pred_index],
-                    "Predicción": y_forecast,
+                    "Escenario": y_forecast,
                 }
                 if y_true:
                     results_data["Valor real"] = y_true
 
                 pred_df = pd.DataFrame(results_data)
 
-                # Add difference and percentage columns (Predicción - Valor real)
-                if "Valor real" in pred_df.columns and "Predicción" in pred_df.columns:
+                if "Valor real" in pred_df.columns and "Escenario" in pred_df.columns:
                     real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
-                    pred = pd.to_numeric(pred_df["Predicción"], errors="coerce")
-                    pred_df["Diferencia"] = (pred - real).apply(
-                        lambda v: fmt_num(v, 4) if pd.notna(v) else v
-                    )
-                    pred_df["% Diferencia"] = (
-                        ((pred - real) / real.replace(0, float("nan"))) * 100
-                    ).apply(lambda v: fmt_num(v, 2, "%") if pd.notna(v) else v)
+                    pred = pd.to_numeric(pred_df["Escenario"], errors="coerce")
+                    pred_df["Diferencia"] = pred - real
+                    pred_df["% Diferencia"] = ((pred - real) / real.replace(0, float("nan"))) * 100
 
                 return {
                     "model": model,
@@ -2082,12 +2359,18 @@ def escenarios_server(input, output, session):
     # --- Outputs (past) ---
 
     @output
-    @render.plot
+    @render.ui
     def esc_past_plot():
         res = scenario_res_rv.get()
         if not res or res.get("mode") != "past":
-            return None
-        return res.get("fig")
+            return ui.div()
+        return ui.HTML(
+            build_interactive_plot_html(
+                res["fig"],
+                session.ns("esc_past_plot_widget"),
+                session.ns("esc_past_plot_click"),
+            )
+        )
 
     @output
     @render.ui
@@ -2095,44 +2378,49 @@ def escenarios_server(input, output, session):
         res = scenario_res_rv.get()
         if not res or res.get("mode") != "past" or res.get("pred_df") is None:
             return ui.div()
+
+        click = input.esc_past_plot_click() if "esc_past_plot_click" in input else None
+        if click and click.get("scenario") is not None:
+            detail_df = pd.DataFrame(
+                [
+                    {
+                        "Fecha": click.get("date_label") or "",
+                        "Valor real": click.get("real") or "",
+                        "Escenario": click.get("scenario") or "",
+                        "Diferencia": click.get("diff") or "",
+                        "% Diferencia": click.get("diff_pct") or "",
+                    }
+                ]
+            )
+            return ui.tags.div(
+                ui.tags.div(
+                    "Punto seleccionado",
+                    style="font-weight:600; margin-bottom:8px;",
+                ),
+                _build_table_html(detail_df, signed_cols=("Diferencia", "% Diferencia")),
+            )
+
         df = res["pred_df"].copy()
-        for col in ["Predicción", "Valor real"]:
+        for col in ["Escenario", "Valor real"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").apply(
                     lambda v: fmt_num(v, 4) if pd.notna(v) else v
                 )
-
-        # Build HTML table with color-coded Diferencia and % Diferencia
-        header_cells = [
-            ui.tags.th(c, style="padding:6px 10px; border-bottom:2px solid #e5e7eb;")
-            for c in df.columns
-        ]
-        rows = []
-        for _, row in df.iterrows():
-            cells = []
-            for col in df.columns:
-                val = row[col]
-                style = "padding:6px 10px; border-bottom:1px solid #f0f0f0;"
-                if col in ("Diferencia", "% Diferencia"):
-                    try:
-                        num = float(val)
-                        # Diferencia = pred - real. <0 → rojo, >0 → verde
-                        color = "#dc2626" if num < 0 else "#16a34a"
-                        style += f" color:{color}; font-weight:600;"
-                        if col == "% Diferencia":
-                            val = fmt_num(num, 2, "%")
-                    except (ValueError, TypeError):
-                        pass
-                cells.append(ui.tags.td(str(val), style=style))
-            rows.append(ui.tags.tr(*cells))
+        if "Diferencia" in df.columns:
+            df["Diferencia"] = pd.to_numeric(df["Diferencia"], errors="coerce").apply(
+                lambda v: _signed_fmt(v, 4) if pd.notna(v) else v
+            )
+        if "% Diferencia" in df.columns:
+            df["% Diferencia"] = pd.to_numeric(df["% Diferencia"], errors="coerce").apply(
+                lambda v: _signed_fmt(v, 2, "%") if pd.notna(v) else v
+            )
 
         return ui.tags.div(
-            ui.tags.table(
-                ui.tags.thead(ui.tags.tr(*header_cells)),
-                ui.tags.tbody(*rows),
-                style="border-collapse:collapse; width:100%; font-size:0.9rem;",
+            ui.tags.div(
+                "Haz clic en un punto del escenario para ver su detalle.",
+                style="color:#6b7280; font-size:0.9rem; margin-bottom:8px;",
             ),
-            style="overflow:auto; max-height:420px;",
+            _build_table_html(df, signed_cols=("Diferencia", "% Diferencia")),
         )
 
     # --- Panel UI (past) ---
@@ -2295,8 +2583,8 @@ def escenarios_server(input, output, session):
         if res is not None and res.get("mode") == "past":
             outputs = ui.tags.div(
                 ui.card(
-                    ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                    ui.output_plot("esc_past_plot", width="100%", height="420px"),
+                    ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
+                    ui.output_ui("esc_past_plot"),
                     style=(
                         "padding:12px; border-radius:14px; "
                         "flex:2 1 640px; min-width:520px;"

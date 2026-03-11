@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import json
 
 import matplotlib
 
@@ -6,6 +7,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.utils import PlotlyJSONEncoder
 
 from back.config import settings
 
@@ -19,6 +22,239 @@ plt.rcParams.update(
         "legend.fontsize": 11,
     }
 )
+
+
+def ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+
+        if not isinstance(df.index, pd.DatetimeIndex):
+                if {"anio", "mes"}.issubset(df.columns):
+                        if "dia" in df.columns:
+                                idx = pd.to_datetime(
+                                        dict(year=df["anio"], month=df["mes"], day=df["dia"]),
+                                        errors="coerce",
+                                )
+                        else:
+                                idx = pd.to_datetime(
+                                        dict(year=df["anio"], month=df["mes"], day=1),
+                                        errors="coerce",
+                                )
+                        df = df.set_index(idx)
+                elif "__dt" in df.columns:
+                        df = df.set_index(pd.to_datetime(df["__dt"], errors="coerce"))
+                else:
+                        raise ValueError("df debe tener DatetimeIndex o columnas anio/mes(/dia).")
+
+        return df[~pd.isna(df.index)].sort_index()
+
+
+def compute_time_axis_bounds(index: pd.DatetimeIndex) -> tuple[pd.Timestamp, pd.Timestamp]:
+        if len(index) == 0:
+                now = pd.Timestamp.now().normalize()
+                return now, now
+
+        dt_index = pd.to_datetime(index, errors="coerce")
+        dt_index = dt_index[~pd.isna(dt_index)]
+        if len(dt_index) == 0:
+                now = pd.Timestamp.now().normalize()
+                return now, now
+
+        if len(dt_index) == 1:
+                return dt_index[0], dt_index[0]
+
+        dt_min, dt_max = dt_index.min(), dt_index.max()
+        step = pd.Series(dt_index).diff().median()
+        if pd.isna(step) or step <= pd.Timedelta(0):
+                fallback_days = int(settings.get("plots.predictions.fallback_step_days", 30))
+                step = pd.Timedelta(days=fallback_days)
+        padding_steps = int(settings.get("plots.predictions.x_axis_padding_steps", 2))
+        pad = step * padding_steps
+        return dt_min - pad, dt_max + pad
+
+
+def build_interactive_plot_html(
+    fig: go.Figure,
+    element_id: str,
+    click_input_id: str | None = None,
+) -> str:
+    fig_json = json.dumps(fig.to_plotly_json(), cls=PlotlyJSONEncoder)
+    click_value = json.dumps(click_input_id) if click_input_id else "null"
+
+    return f"""
+<div id=\"{element_id}\" style=\"width:100%; min-height:420px; background:#fff;\"></div>
+<script>
+(function() {{
+    const spec = {fig_json};
+    const domId = {json.dumps(element_id)};
+    const clickInputId = {click_value};
+
+    function pointPayload(pt) {{
+        const data = Array.isArray(pt.customdata) ? pt.customdata : [];
+        return {{
+            trace_name: pt.data && pt.data.name ? pt.data.name : null,
+            x: pt.x ?? null,
+            y: pt.y ?? null,
+            date_label: data[0] ?? null,
+            real: data[1] ?? null,
+            scenario: data[2] ?? null,
+            diff: data[3] ?? null,
+            diff_pct: data[4] ?? null,
+            segment: data[5] ?? null,
+        }};
+    }}
+
+    function applyCrosshair(gd, x, y) {{
+        Plotly.relayout(gd, {{
+            shapes: [
+                {{
+                    type: 'line',
+                    x0: x,
+                    x1: x,
+                    y0: 0,
+                    y1: 1,
+                    xref: 'x',
+                    yref: 'paper',
+                    line: {{ color: '#94a3b8', width: 1, dash: 'dot' }}
+                }},
+                {{
+                    type: 'line',
+                    x0: 0,
+                    x1: 1,
+                    y0: y,
+                    y1: y,
+                    xref: 'paper',
+                    yref: 'y',
+                    line: {{ color: '#94a3b8', width: 1, dash: 'dot' }}
+                }}
+            ]
+        }});
+    }}
+
+        function syncFullscreenStyles(gd) {{
+            const isFullscreen = document.fullscreenElement === gd;
+            if (isFullscreen) {{
+                gd.style.width = '100vw';
+                gd.style.height = '100vh';
+                gd.style.maxWidth = '100vw';
+                gd.style.maxHeight = '100vh';
+                gd.style.background = '#ffffff';
+                gd.style.padding = '12px';
+                gd.style.boxSizing = 'border-box';
+            }} else {{
+                gd.style.width = '100%';
+                gd.style.height = '420px';
+                gd.style.maxWidth = '';
+                gd.style.maxHeight = '';
+                gd.style.background = '#ffffff';
+                gd.style.padding = '';
+                gd.style.boxSizing = '';
+            }}
+            if (window.Plotly && window.Plotly.Plots) {{
+                window.Plotly.Plots.resize(gd);
+            }}
+        }}
+
+    function initPlotly() {{
+        const gd = document.getElementById(domId);
+        if (!gd) return;
+
+        const fullscreenButton = {{
+            name: 'Pantalla completa',
+            title: 'Pantalla completa',
+            icon: {{
+                width: 1000,
+                height: 1000,
+                path: 'M128 128h256v96H224v160H128V128zm488 0h256v256h-96V224H616v-96zM128 616h96v160h160v96H128V616zm648 0h96v256H616v-96h160V616z'
+            }},
+            click: function() {{
+                if (!document.fullscreenElement) {{
+                    if (gd.requestFullscreen) {{
+                        gd.requestFullscreen();
+                    }}
+                }} else if (document.exitFullscreen) {{
+                    document.exitFullscreen();
+                }}
+            }}
+        }};
+
+        Plotly.newPlot(gd, spec.data, spec.layout, {{
+            responsive: true,
+            locale: 'es',
+            displaylogo: false,
+            modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            modeBarButtonsToAdd: [fullscreenButton]
+        }});
+
+        gd.style.height = '420px';
+        gd.style.background = '#ffffff';
+        document.addEventListener('fullscreenchange', function() {{
+            syncFullscreenStyles(gd);
+        }});
+        setTimeout(function() {{
+            syncFullscreenStyles(gd);
+        }}, 0);
+
+        gd.on('plotly_click', function(evt) {{
+            if (!evt || !evt.points || !evt.points.length) return;
+            const pt = evt.points[0];
+            applyCrosshair(gd, pt.x, pt.y);
+            if (window.Shiny && clickInputId) {{
+                Shiny.setInputValue(clickInputId, pointPayload(pt), {{ priority: 'event' }});
+            }}
+        }});
+
+        gd.on('plotly_doubleclick', function() {{
+            Plotly.relayout(gd, {{ shapes: [] }});
+            if (window.Shiny && clickInputId) {{
+                Shiny.setInputValue(clickInputId, null, {{ priority: 'event' }});
+            }}
+        }});
+    }}
+
+    function ensureSpanishLocale(callback) {{
+        if (window.Plotly && window.PlotlyLocales && window.PlotlyLocales.es) {{
+            callback();
+            return;
+        }}
+
+        document.addEventListener('forecastingpcd:plotly-locale-es-ready', callback, {{ once: true }});
+
+        if (window.__forecastingpcdPlotlyLocaleEsLoading) {{
+            return;
+        }}
+
+        window.__forecastingpcdPlotlyLocaleEsLoading = true;
+        const localeScript = document.createElement('script');
+        localeScript.src = 'https://cdn.plot.ly/plotly-locale-es-latest.js';
+        localeScript.onload = function() {{
+            window.__forecastingpcdPlotlyLocaleEsLoading = false;
+            document.dispatchEvent(new Event('forecastingpcd:plotly-locale-es-ready'));
+        }};
+        document.head.appendChild(localeScript);
+    }}
+
+    if (window.Plotly) {{
+        ensureSpanishLocale(initPlotly);
+        return;
+    }}
+
+    document.addEventListener('forecastingpcd:plotly-ready', function() {{
+        ensureSpanishLocale(initPlotly);
+    }}, {{ once: true }});
+
+    if (!window.__forecastingpcdPlotlyLoading) {{
+        window.__forecastingpcdPlotlyLoading = true;
+        const script = document.createElement('script');
+        script.src = 'https://cdn.plot.ly/plotly-2.35.2.min.js';
+        script.onload = function() {{
+            window.__forecastingpcdPlotlyLoading = false;
+            document.dispatchEvent(new Event('forecastingpcd:plotly-ready'));
+        }};
+        document.head.appendChild(script);
+    }}
+}})();
+</script>
+"""
 
 
 def plot_predictions(
@@ -57,21 +293,31 @@ def plot_predictions(
     figsize = tuple(settings.get("plots.predictions.figsize", [12, 5]))
     scatter_size = int(settings.get("plots.predictions.scatter_size_single_point", 30))
     scatter_color = settings.get("plots.predictions.prediction_scatter_color", "red")
+    prediction_marker = settings.get("plots.predictions.prediction_marker", "o")
+    prediction_marker_size = int(
+        settings.get("plots.predictions.prediction_marker_size", 6)
+    )
 
     fig, ax = plt.subplots(figsize=figsize)
-    train[column_y].plot(ax=ax, label="Train")
+    train[column_y].plot(ax=ax, label="Real")
 
     if len(pred) == 1:
         ax.scatter(
             pred.index,
             pred.values,
-            label="Prediction",
+            label="Predicción",
             zorder=5,
             s=scatter_size,
             color=scatter_color,
         )
     else:
-        pred.plot(ax=ax, label="Prediction")
+        pred.plot(
+            ax=ax,
+            label="Predicción",
+            color=scatter_color,
+            marker=prediction_marker,
+            markersize=prediction_marker_size,
+        )
 
     ax.relim()
     ax.autoscale_view()
