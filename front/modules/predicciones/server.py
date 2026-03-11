@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import pandas as pd
+import numpy as np
 from shiny import ui, reactive, render, module
 from front.utils.back_api_wrappers import sarimax_run
 from front.utils.back_api_wrappers import xgboost_run
@@ -903,6 +904,9 @@ def predicciones_server(input, output, session):
 
         future = df.iloc[n_obs : n_obs + h]
         pred_vals = resp["y_forecast"]
+        # Aplica la inversa si el backend usó log1p
+        if resp.get("log_transform_used"):
+            pred_vals = np.expm1(pred_vals)
         pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 

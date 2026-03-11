@@ -1,6 +1,7 @@
 import asyncio
 import tempfile
 import pandas as pd
+import numpy as np
 from shiny import module, reactive, render, ui
 import httpx
 from back.models.utils.models_graph import plot_predictions
@@ -1055,6 +1056,10 @@ def escenarios_server(input, output, session):
 
         future = df.iloc[n_obs : n_obs + h].copy()
         pred_vals = list(resp.get("y_forecast") or [])
+
+        # Aplica la inversa si el backend usó log1p
+        if resp.get("log_transform_used"):
+            pred_vals = np.expm1(pred_vals)
 
         future_dates = None
         if {"anio", "mes", "dia"}.issubset(future.columns):
