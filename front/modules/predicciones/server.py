@@ -907,7 +907,6 @@ def predicciones_server(input, output, session):
 
         future = df.iloc[n_obs : n_obs + h].copy()
         pred_vals = list(resp.get("y_forecast") or [])
-
         future_dates = None
         if {"anio", "mes", "dia"}.issubset(future.columns):
             future_dates = pd.to_datetime(
@@ -916,44 +915,19 @@ def predicciones_server(input, output, session):
             )
         elif {"anio", "mes"}.issubset(future.columns):
             future_dates = pd.to_datetime(
-                dict(year=future["anio"], month=future["mes"], day=1),
-                errors="coerce",
+                dict(year=future["anio"], month=future["mes"], day=1), errors="coerce"
             )
         elif "__dt" in future.columns:
             future_dates = pd.to_datetime(future["__dt"], errors="coerce")
 
-        if future_dates is not None:
-            future_dates = pd.to_datetime(future_dates, errors="coerce")
+        if len(pred_vals) != len(future):
+            m = min(len(pred_vals), len(future))
+            pred_vals = pred_vals[:m]
+            future = future.iloc[:m].copy()
+            if future_dates is not None:
+                future_dates = pd.to_datetime(future_dates, errors="coerce")[:m]
 
-        m = min(len(pred_vals), len(future))
-        pred_vals = pred_vals[:m]
-        future = future.iloc[:m].copy()
-
-        if future_dates is not None:
-            pred_index = pd.DatetimeIndex(future_dates[:m])
-        else:
-            df_dates = df.iloc[n_obs : n_obs + m].copy()
-            if {"anio", "mes", "dia"}.issubset(df_dates.columns):
-                pred_index = pd.DatetimeIndex(
-                    pd.to_datetime(
-                        dict(
-                            year=df_dates["anio"],
-                            month=df_dates["mes"],
-                            day=df_dates["dia"],
-                        ),
-                        errors="coerce",
-                    )
-                )
-            elif {"anio", "mes"}.issubset(df_dates.columns):
-                pred_index = pd.DatetimeIndex(
-                    pd.to_datetime(
-                        dict(year=df_dates["anio"], month=df_dates["mes"], day=1),
-                        errors="coerce",
-                    )
-                )
-            else:
-                pred_index = pd.DatetimeIndex(pd.to_datetime(future.index, errors="coerce"))
-
+        pred_index = future_dates if future_dates is not None else future.index
         pred_series = pd.Series(pred_vals, index=pred_index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 
