@@ -246,11 +246,6 @@ def sarimax_run(req: SarimaxRunRequest):
         if len(df_hist) < int(COMMON_CFG.get("min_historical_rows", 3)):
             _raise_422("Histórico insuficiente para entrenar SARIMAX")
 
-        # --- log1p transform to avoid negative predictions ---
-        use_log = bool((df_hist[y_col] >= 0).all())
-        if use_log:
-            df_hist[y_col] = np.log1p(df_hist[y_col])
-
         if req.scenario_mode == "past":
             if req.scenario_window is None:
                 _raise_422("scenario_window es obligatorio cuando scenario_mode='past'")
@@ -279,10 +274,6 @@ def sarimax_run(req: SarimaxRunRequest):
             model_fit = create_sarimax_model(train=train, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
             exog_test = test[exog_cols].astype(float) if exog_cols else None
             y_forecast = model_fit.predict(start=len(train), end=len(train) + len(test) - 1, exog=exog_test)
-            if use_log:
-                y_forecast = np.expm1(y_forecast)
-                test = test.copy()
-                test[y_col] = np.expm1(test[y_col])
             y_true = test[y_col].astype(float).tolist()
             mape, rmse, mae = compute_metrics(pred=y_forecast, df_test=test, indicador=y_col)
             return SarimaxRunResponse(
@@ -349,18 +340,10 @@ def sarimax_run(req: SarimaxRunRequest):
         order, seas = _select_params(req, df_hist, exog_cols, y_col, n_test, use_fourier)
         model_fit = create_sarimax_model(train=train, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
         pred_test = model_fit.predict(start=len(train), end=len(train) + len(test) - 1, exog=exog_test)
-        if use_log:
-            pred_test = np.expm1(pred_test)
-            test = test.copy()
-            test[y_col] = np.expm1(test[y_col])
         mape, rmse, mae = compute_metrics(pred=pred_test, df_test=test, indicador=y_col)
 
         model_fit_full = create_sarimax_model(train=df_hist, exog_cols=exog_cols, column_y=y_col, order=order, seasonal_order=seas)
         y_forecast = model_fit_full.predict(start=len(df_hist), end=len(df_hist) + horizon - 1, exog=exog_future)
-        if use_log:
-            y_forecast = np.expm1(y_forecast)
-            df_hist[y_col] = np.expm1(df_hist[y_col])
-
         # Populate calendar columns in df_future from __dt
         fut_dt = pd.to_datetime(df_future["__dt"])
         if ano_col and ano_col in df_hist.columns:
