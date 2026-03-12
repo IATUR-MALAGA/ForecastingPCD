@@ -257,8 +257,9 @@ def sarimax_run(req: SarimaxRunRequest):
             if ws < hist_min or we > hist_max:
                 _raise_422("scenario_window debe estar dentro del rango histórico observado")
 
-            train = df_hist[pd.to_datetime(df_hist["__dt"]) < ws].copy()
-            test = df_hist[(pd.to_datetime(df_hist["__dt"]) >= ws) & (pd.to_datetime(df_hist["__dt"]) <= we)].copy()
+            hist_dt = pd.to_datetime(df_hist["__dt"])
+            train = df_hist[hist_dt < ws].copy()
+            test = df_hist[hist_dt >= ws].copy()
             if train.empty or test.empty:
                 _raise_422("No hay datos suficientes para entrenar/probar en la ventana indicada")
             if exog_cols:
@@ -334,7 +335,6 @@ def sarimax_run(req: SarimaxRunRequest):
             _raise_422(f"Split inválido (histórico): n={len(df_hist)}, n_train={n_train}, n_test={n_test}. Ajusta train_ratio.")
         train = df_hist.iloc[:n_train]
         test = df_hist.iloc[n_train:n_train + n_test]
-
         exog_test = test[exog_cols].astype(float) if exog_cols else None
 
         order, seas = _select_params(req, df_hist, exog_cols, y_col, n_test, use_fourier)

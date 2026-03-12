@@ -1,6 +1,6 @@
 import asyncio
-import tempfile
 import pandas as pd
+import plotly.graph_objects as go
 from shiny import ui, reactive, render, module
 from front.utils.back_api_wrappers import sarimax_run
 from front.utils.back_api_wrappers import xgboost_run
@@ -8,7 +8,11 @@ from front.utils.back_api_wrappers import (
     get_names_in_table_catalog,
     get_tableName_for_variable,
 )
-from back.models.utils.models_graph import plot_predictions
+from back.models.utils.models_graph import (
+    build_interactive_plot_html,
+    compute_time_axis_bounds,
+    ensure_datetime_index,
+)
 
 from front.utils.utils import (
     ICON_SVG_INFO,
@@ -901,9 +905,56 @@ def predicciones_server(input, output, session):
         n_obs = int(resp["n_obs"])
         h = int(resp["horizon"])
 
-        future = df.iloc[n_obs : n_obs + h]
-        pred_vals = resp["y_forecast"]
-        pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
+        future = df.iloc[n_obs : n_obs + h].copy()
+        pred_vals = list(resp.get("y_forecast") or [])
+
+        future_dates = None
+        if {"anio", "mes", "dia"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=future["dia"]),
+                errors="coerce",
+            )
+        elif {"anio", "mes"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=1),
+                errors="coerce",
+            )
+        elif "__dt" in future.columns:
+            future_dates = pd.to_datetime(future["__dt"], errors="coerce")
+
+        if future_dates is not None:
+            future_dates = pd.to_datetime(future_dates, errors="coerce")
+
+        m = min(len(pred_vals), len(future))
+        pred_vals = pred_vals[:m]
+        future = future.iloc[:m].copy()
+
+        if future_dates is not None:
+            pred_index = pd.DatetimeIndex(future_dates[:m])
+        else:
+            df_dates = df.iloc[n_obs : n_obs + m].copy()
+            if {"anio", "mes", "dia"}.issubset(df_dates.columns):
+                pred_index = pd.DatetimeIndex(
+                    pd.to_datetime(
+                        dict(
+                            year=df_dates["anio"],
+                            month=df_dates["mes"],
+                            day=df_dates["dia"],
+                        ),
+                        errors="coerce",
+                    )
+                )
+            elif {"anio", "mes"}.issubset(df_dates.columns):
+                pred_index = pd.DatetimeIndex(
+                    pd.to_datetime(
+                        dict(year=df_dates["anio"], month=df_dates["mes"], day=1),
+                        errors="coerce",
+                    )
+                )
+            else:
+                pred_index = pd.DatetimeIndex(pd.to_datetime(future.index, errors="coerce"))
+
+        pred_series = pd.Series(pred_vals, index=pred_index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 
     def _build_pred_df(
@@ -1014,6 +1065,108 @@ def predicciones_server(input, output, session):
         return _metric_info_tooltip(
             "MAPE, RMSE y MAE evalúan el error del modelo desde distintas perspectivas."
         )
+
+    def _build_table_html(df: pd.DataFrame) -> ui.Tag:
+        header_cells = [
+            ui.tags.th(
+                c,
+                style="padding:6px 10px; border-bottom:2px solid #e5e7eb; text-align:left;",
+            )
+            for c in df.columns
+        ]
+        rows = []
+        for _, row in df.iterrows():
+            cells = []
+            for col in df.columns:
+                cells.append(
+                    ui.tags.td(
+                        "" if pd.isna(row[col]) else str(row[col]),
+                        style="padding:6px 10px; border-bottom:1px solid #f0f0f0;",
+                    )
+                )
+            rows.append(ui.tags.tr(*cells))
+
+        return ui.tags.div(
+            ui.tags.table(
+                ui.tags.thead(ui.tags.tr(*header_cells)),
+                ui.tags.tbody(*rows),
+                style="border-collapse:collapse; width:100%; font-size:0.9rem;",
+            ),
+            style="overflow:auto; max-height:420px;",
+        )
+
+    def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y):
+        df_plot = ensure_datetime_index(df)
+        pred_index = pd.to_datetime(pred.index, errors="coerce")
+        pred_series = pd.Series(pred.values, index=pred_index, name="Predicción")
+        pred_series = pred_series[~pd.isna(pred_series.index)]
+
+        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        x_min, x_max = compute_time_axis_bounds(all_index)
+
+        customdata = [
+            [
+                ts.strftime("%d-%m-%Y"),
+                None,
+                fmt_num(val, 4),
+                None,
+                None,
+                "prediccion",
+            ]
+            for ts, val in zip(pred_series.index, pred_series.values)
+        ]
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df_plot.index,
+                y=df_plot[column_y],
+                mode="lines",
+                name="Real",
+                line={"color": "#1f77b4", "width": 2},
+                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=pred_series.index,
+                y=pred_series.values,
+                mode="lines+markers",
+                name="Predicción",
+                line={"color": "#e11d48", "width": 3},
+                marker={"color": "#e11d48", "size": 9},
+                customdata=customdata,
+                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Predicción: %{y:,.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title=title,
+            margin={"l": 50, "r": 20, "t": 60, "b": 50},
+            hovermode="closest",
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#ffffff",
+            legend={"orientation": "h", "y": 1.08, "x": 0.01},
+            xaxis={
+                "title": xlabel,
+                "range": [x_min, x_max],
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+            yaxis={
+                "title": ylabel,
+                "showgrid": True,
+                "gridcolor": "#e5e7eb",
+                "showspikes": True,
+                "spikemode": "across",
+                "spikecolor": "#94a3b8",
+                "spikedash": "dot",
+            },
+        )
+        return fig
 
     # ------------------------
     # Inputs auxiliares
@@ -1143,7 +1296,7 @@ def predicciones_server(input, output, session):
                     return None
                 df, y_col, future, h, pred_vals, pred_series = parsed
                 pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
-                fig = plot_predictions(
+                fig = _build_prediction_figure(
                     df=df,
                     pred=pred_series,
                     title=(
@@ -1154,8 +1307,6 @@ def predicciones_server(input, output, session):
                     ylabel="Valores",
                     xlabel="Fecha",
                     column_y=y_col,
-                    periodos_a_predecir=h,
-                    holidays_col=None,
                 )
                 return _pack_result(model, resp, fig, pred_df, predictors_used, h)
 
@@ -1169,34 +1320,57 @@ def predicciones_server(input, output, session):
     # Outputs (usa el almacén, no calcula)
     # ------------------------
     @output
-    @render.image(delete_file=True)
+    @render.ui
     def model_plot():
         res = pred_results_rv.get()
         if not res:
-            return {"src": "", "alt": "Sin resultados"}
+            return ui.div()
 
-        fig = res["fig"]
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            fig.savefig(tmp.name, dpi=100)
-            return {
-                "src": tmp.name,
-                "alt": "Predicciones",
-                "style": "width:100%; height:auto; display:block;",
-            }
+        return ui.HTML(
+            build_interactive_plot_html(
+                res["fig"],
+                session.ns("pred_plot_widget"),
+                session.ns("pred_plot_click"),
+            )
+        )
 
     @output
-    @render.data_frame
+    @render.ui
     def pred_table():
         res = pred_results_rv.get()
         if not res or res.get("pred_df") is None:
-            return render.DataGrid(pd.DataFrame())
+            return ui.div()
+
+        click = input.pred_plot_click() if "pred_plot_click" in input else None
+        if click and click.get("scenario") is not None:
+            detail_df = pd.DataFrame(
+                [
+                    {
+                        "Fecha": click.get("date_label") or "",
+                        "Predicción": click.get("scenario") or fmt_num(click.get("y"), 4),
+                    }
+                ]
+            )
+            return ui.tags.div(
+                ui.tags.div(
+                    "Punto seleccionado",
+                    style="font-weight:600; margin-bottom:8px;",
+                ),
+                _build_table_html(detail_df),
+            )
 
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
             df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
                 lambda v: fmt_num(v, 4) if pd.notna(v) else v
             )
-        return render.DataGrid(df)
+        return ui.tags.div(
+            ui.tags.div(
+                "Haz clic en un punto para ver su detalle.",
+                style="color:#6b7280; font-size:0.9rem; margin-bottom:8px;",
+            ),
+            _build_table_html(df),
+        )
 
     # ------------------------
     # UI Panel 4
@@ -1341,17 +1515,17 @@ def predicciones_server(input, output, session):
         # Layout plot + tabla (responsive)
         body = ui.tags.div(
             ui.card(
-                ui.h5("Gráfico", style="margin:0 0 8px 0;"),
-                ui.output_image("model_plot", width="100%", height="auto"),
+                ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
+                ui.output_ui("model_plot"),
                 style=(
                     "padding: 12px; border-radius: 14px;"
                     "flex: 2 1 640px; min-width: 520px;"
                 ),
             ),
             ui.card(
-                ui.h5("Valores predichos", style="margin:0 0 8px 0;"),
+                ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
                 ui.tags.div(  # wrapper para controlar altura/scroll si crece
-                    ui.output_data_frame("pred_table"),
+                    ui.output_ui("pred_table"),
                     style="max-height: 420px; overflow:auto;",
                 ),
                 style=(
