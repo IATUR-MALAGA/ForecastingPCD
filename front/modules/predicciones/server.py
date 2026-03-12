@@ -902,12 +902,34 @@ def predicciones_server(input, output, session):
         n_obs = int(resp["n_obs"])
         h = int(resp["horizon"])
 
-        future = df.iloc[n_obs : n_obs + h]
-        pred_vals = resp["y_forecast"]
+        future = df.iloc[n_obs : n_obs + h].copy()
+        pred_vals = list(resp.get("y_forecast") or [])
         # Aplica la inversa si el backend usó log1p
         if resp.get("log_transform_used"):
             pred_vals = np.expm1(pred_vals)
-        pred_series = pd.Series(pred_vals, index=future.index, name="Prediction")
+
+        future_dates = None
+        if {"anio", "mes", "dia"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=future["dia"]),
+                errors="coerce",
+            )
+        elif {"anio", "mes"}.issubset(future.columns):
+            future_dates = pd.to_datetime(
+                dict(year=future["anio"], month=future["mes"], day=1), errors="coerce"
+            )
+        elif "__dt" in future.columns:
+            future_dates = pd.to_datetime(future["__dt"], errors="coerce")
+
+        if len(pred_vals) != len(future):
+            m = min(len(pred_vals), len(future))
+            pred_vals = pred_vals[:m]
+            future = future.iloc[:m].copy()
+            if future_dates is not None:
+                future_dates = pd.to_datetime(future_dates, errors="coerce")[:m]
+
+        pred_index = future_dates if future_dates is not None else future.index
+        pred_series = pd.Series(pred_vals, index=pred_index, name="Prediction")
         return df, y_col, future, h, pred_vals, pred_series
 
     def _build_pred_df(
