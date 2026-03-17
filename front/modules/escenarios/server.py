@@ -1565,16 +1565,13 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
+            ui.tags.th("Fecha", style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;")
         ]
-        for k in range(1, h + 1):
+        for ex in exogs:
             header_cells.append(
                 ui.tags.th(
-                    ui.tags.div(f"P{k}", style="font-weight:700;"),
-                    ui.tags.div(
-                        _dt_label(idx[k - 1], temp),
-                        style="font-size:12px; color:#6b7280; margin-top:2px;",
-                    ),
+                    ex,
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;"
                 )
             )
 
@@ -1582,27 +1579,33 @@ def escenarios_server(input, output, session):
         _gen = fut_gen_rv.get()
 
         body_rows = []
-        for ex in exogs:
+        for k in range(1, h + 1):
             cells = [
                 ui.tags.td(
-                    ui.tags.span(ex),
-                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap;",
+                    _dt_label(idx[k - 1], temp),
+                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap; z-index:1; border-bottom:1px solid #e5e7eb; padding:8px 12px;",
                 )
             ]
-            for k in range(1, h + 1):
+            for ex in exogs:
                 cid = _cell_id(ex, k, _gen)
                 _init_val = _cell_saved.get(cid, None)
                 cells.append(
                     ui.tags.td(
                         ui.input_numeric(
-                            cid, label="", value=_init_val, step=0.01
-                        ),  # ✅ sin ns()
-                        style="min-width:120px;",
+                            cid, label="", value=_init_val, step=0.01, width="100%"
+                        ),
+                        style="text-align:center; border-bottom:1px solid #e5e7eb; padding:4px 8px;",
                     )
                 )
             body_rows.append(ui.tags.tr(*cells))
 
         return ui.tags.div(
+            ui.tags.style(
+                """
+                .esc-fut-table td .form-group { margin-bottom: 0 !important; }
+                .esc-fut-table td .shiny-input-container { margin-bottom: 0 !important; }
+                """
+            ),
             ui.tags.div(
                 ui.tags.b("3) Valores futuros de exógenas activas"),
                 ui.tags.span(" (rellena todas las celdas)"),
@@ -1612,9 +1615,10 @@ def escenarios_server(input, output, session):
                 ui.tags.table(
                     ui.tags.thead(ui.tags.tr(*header_cells)),
                     ui.tags.tbody(*body_rows),
-                    style="border-collapse:collapse; width:max-content;",
+                    class_="esc-fut-table",
+                    style="border-collapse:collapse; min-width:100%; background:#fff;",
                 ),
-                style="overflow:auto; max-width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:8px;",
+                style="overflow:auto; width:100%; max-height:400px; border:1px solid #e5e7eb; border-radius:12px; padding:0; background:#fff;",
             ),
         )
 
@@ -2235,34 +2239,28 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
+            ui.tags.th("Fecha", style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;")
         ]
-        for k in range(1, h + 1):
+        for ex in exogs:
             header_cells.append(
                 ui.tags.th(
-                    ui.tags.div(f"P{k}", style="font-weight:700;"),
-                    ui.tags.div(
-                        _dt_label(dates[k - 1], temp),
-                        style="font-size:12px; color:#6b7280; margin-top:2px;",
-                    ),
+                    ex,
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;"
                 )
             )
 
         _cell_saved = saved_past_cell_values_rv.get()
 
         body_rows = []
-        for ex in exogs:
+        for k in range(1, h + 1):
             cells = [
                 ui.tags.td(
-                    ui.tags.span(ex),
-                    style=(
-                        "position:sticky; left:0; background:#fff; "
-                        "font-weight:600; white-space:nowrap;"
-                    ),
+                    _dt_label(dates[k - 1], temp),
+                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap; z-index:1; border-bottom:1px solid #e5e7eb; padding:8px 12px;",
                 )
             ]
 
-            for k in range(1, h + 1):
+            for ex in exogs:
                 cid = _past_cell_id(ex, k)
                 _init_val = _cell_saved.get(cid, None)
 
@@ -2282,13 +2280,14 @@ def escenarios_server(input, output, session):
                                 label="",
                                 value=_init_val,
                                 step=0.01,
+                                width="100%"
                             ),
                             ui.tags.span(
                                 "" if prev_val is None else fmt_num(prev_val, 4),
                                 class_="esc-past-num-ghost",
                             ),
                         ),
-                        style="min-width:140px;",
+                        style="text-align:center; border-bottom:1px solid #e5e7eb; padding:4px 8px;",
                     )
                 )
 
@@ -2299,7 +2298,8 @@ def escenarios_server(input, output, session):
                 """
                 .esc-past-num-wrap {
                     position: relative;
-                    min-width: 140px;
+                    min-width: 100px;
+                    margin: 0 auto;
                 }
 
                 .esc-past-num-wrap .form-group,
@@ -2316,11 +2316,13 @@ def escenarios_server(input, output, session):
                     position: relative;
                     z-index: 2;
                     background: transparent !important;
+                    text-align: right;
                 }
 
                 .esc-past-num-ghost {
                     position: absolute;
-                    left: 12px;
+                    left: auto;
+                    right: 28px;
                     top: 50%;
                     transform: translateY(-50%);
                     color: #94a3b8;
@@ -2380,11 +2382,11 @@ def escenarios_server(input, output, session):
                 ui.tags.table(
                     ui.tags.thead(ui.tags.tr(*header_cells)),
                     ui.tags.tbody(*body_rows),
-                    style="border-collapse:collapse; width:max-content;",
+                    style="border-collapse:collapse; min-width:100%; background:#fff;",
                 ),
                 style=(
-                    "overflow:auto; max-width:100%; border:1px solid #e5e7eb; "
-                    "border-radius:12px; padding:8px;"
+                    "overflow:auto; width:100%; max-height:400px; border:1px solid #e5e7eb; "
+                    "border-radius:12px; padding:0; background:#fff;"
                 ),
             ),
         )
