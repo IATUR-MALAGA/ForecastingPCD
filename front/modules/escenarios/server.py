@@ -1483,27 +1483,23 @@ def escenarios_server(input, output, session):
             pass
 
     @reactive.Effect
+    @reactive.event(input.esc_fut_active_exogs)
     def _save_cells_before_exog_toggle():
         if current_step.get() != 4:
             return
-
-        if "esc_fut_active_exogs" not in input:
-            return
-        _ = input.esc_fut_active_exogs()
 
         with reactive.isolate():
             exogs = list(fut_exogs())
             h = int(fut_horizon())
             gen = fut_gen_rv.get()
             saved = dict(saved_fut_cell_values_rv.get())
-        for ex in exogs:
-            for k in range(1, h + 1):
-                cid = _cell_id(ex, k, gen)
-                if cid in input:
-                    v = input[cid]()
-                    if v is not None:
+            for ex in exogs:
+                for k in range(1, h + 1):
+                    cid = _cell_id(ex, k, gen)
+                    if cid in input:
+                        v = input[cid]()
                         saved[cid] = v
-        saved_fut_cell_values_rv.set(saved)
+            saved_fut_cell_values_rv.set(saved)
 
     # ------------------------
     # UI: tabla editable (2)
@@ -1633,19 +1629,18 @@ def escenarios_server(input, output, session):
         if int(input.esc_fut_calc() or 0) == 0:
             return
 
-        _exogs_snap = fut_exogs()
-        _h_snap = fut_horizon()
         with reactive.isolate():
+            _exogs_snap = fut_exogs()
+            _h_snap = fut_horizon()
             _gen_snap = fut_gen_rv.get()
-        _saved_snap = dict(saved_fut_cell_values_rv.get())
-        for _ex in _exogs_snap:
-            for _k in range(1, _h_snap + 1):
-                _cid = _cell_id(_ex, _k, _gen_snap)
-                if _cid in input:
-                    _v = input[_cid]()
-                    if _v is not None:
+            _saved_snap = dict(saved_fut_cell_values_rv.get())
+            for _ex in _exogs_snap:
+                for _k in range(1, _h_snap + 1):
+                    _cid = _cell_id(_ex, _k, _gen_snap)
+                    if _cid in input:
+                        _v = input[_cid]()
                         _saved_snap[_cid] = _v
-        saved_fut_cell_values_rv.set(_saved_snap)
+            saved_fut_cell_values_rv.set(_saved_snap)
         # ─────────────────────────────────────────────────────────────────────
 
         scenario_err_rv.set(None)
@@ -2153,22 +2148,19 @@ def escenarios_server(input, output, session):
             exogs = list(past_exogs())
             dates = past_window_dates()
             saved = dict(saved_past_cell_values_rv.get())
-        for ex in exogs:
-            for k in range(1, len(dates) + 1):
-                cid = _past_cell_id(ex, k)
-                if cid in input:
-                    v = input[cid]()
-                    if v is not None:
+            for ex in exogs:
+                for k in range(1, len(dates) + 1):
+                    cid = _past_cell_id(ex, k)
+                    if cid in input:
+                        v = input[cid]()
                         saved[cid] = v
-        saved_past_cell_values_rv.set(saved)
+            saved_past_cell_values_rv.set(saved)
 
     @reactive.Effect
+    @reactive.event(input.esc_past_active_exogs)
     def _save_past_cells_before_exog_toggle():
         if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
             return
-        if "esc_past_active_exogs" not in input:
-            return
-        _ = input.esc_past_active_exogs()
         _save_past_cells()
 
     # --- Exog selector (past) ---
