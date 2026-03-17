@@ -88,6 +88,18 @@ def build_interactive_plot_html(
     const domId = {json.dumps(element_id)};
     const clickInputId = {click_value};
 
+    spec.layout = spec.layout || {{}};
+    spec.layout.separators = ',.';
+
+    (spec.data || []).forEach(function(trace) {{
+        if (!trace.hovertemplate) {{
+            trace.hovertemplate =
+                '<b>%{{fullData.name}}</b><br>' +
+                'X: %{{x}}<br>' +
+                'Valor: %{{y:,.0f}}<extra></extra>';
+        }}
+    }});
+
     function pointPayload(pt) {{
         const data = Array.isArray(pt.customdata) ? pt.customdata : [];
         return {{

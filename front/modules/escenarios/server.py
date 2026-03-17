@@ -96,6 +96,39 @@ def escenarios_server(input, output, session):
         return pd.to_datetime(df.index, errors="coerce")
 
     def _build_table_html(df: pd.DataFrame, signed_cols: tuple[str, ...] = ()) -> ui.Tag:
+        def _parse_signed_value(val):
+            if val is None or pd.isna(val):
+                return None
+
+            s = str(val).strip()
+            if not s:
+                return None
+
+            # Limpieza básica
+            s = (
+                s.replace("%", "")
+                .replace("\xa0", "")
+                .replace(" ", "")
+                .replace("−", "-")   # minus unicode
+            )
+
+            # Normalizar separadores decimales/miles
+            if "," in s and "." in s:
+                # Si la coma va al final, asumimos formato europeo: 1.234,56
+                if s.rfind(",") > s.rfind("."):
+                    s = s.replace(".", "").replace(",", ".")
+                else:
+                    # formato tipo 1,234.56
+                    s = s.replace(",", "")
+            elif "," in s:
+                # formato tipo 12,34
+                s = s.replace(",", ".")
+
+            try:
+                return float(s)
+            except (TypeError, ValueError):
+                return None
+
         header_cells = [
             ui.tags.th(
                 c,
@@ -103,19 +136,20 @@ def escenarios_server(input, output, session):
             )
             for c in df.columns
         ]
+
         rows = []
         for _, row in df.iterrows():
             cells = []
             for col in df.columns:
                 val = row[col]
                 style = "padding:6px 10px; border-bottom:1px solid #f0f0f0;"
+
                 if col in signed_cols:
-                    try:
-                        num = float(str(val).replace("%", ""))
+                    num = _parse_signed_value(val)
+                    if num is not None:
                         color = "#dc2626" if num < 0 else "#16a34a" if num > 0 else "#475569"
                         style += f" color:{color}; font-weight:600;"
-                    except (TypeError, ValueError):
-                        pass
+
                 cells.append(ui.tags.td("" if pd.isna(val) else str(val), style=style))
             rows.append(ui.tags.tr(*cells))
 
@@ -1925,6 +1959,99 @@ def escenarios_server(input, output, session):
     past_scenario_err_rv = reactive.Value(None)
     saved_past_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados (pasado)
 
+    base_info_rv = reactive.Value({})  # lookup de valores históricos por (exog, fecha)
+
+
+    def _build_past_base_lookup(
+        df: pd.DataFrame, exogs: list[str], temp: str
+    ) -> dict[tuple[str, str], float]:
+        if df.empty:
+            return {}
+
+        work = df.copy()
+        work["__dt"] = normalize_dt_series(_extract_dates(work), temp)
+
+        lookup: dict[tuple[str, str], float] = {}
+        for ex in exogs:
+            col_name = next(
+                (c for c in (ex, _safe_alias(ex)) if c in work.columns),
+                None,
+            )
+            if col_name is None:
+                continue
+
+            values = pd.to_numeric(work[col_name], errors="coerce")
+            for dt, val in zip(work["__dt"], values):
+                if pd.notna(dt) and pd.notna(val):
+                    lookup[(ex, dt_str(dt, temp, kind="key"))] = float(val)
+
+        return lookup
+
+
+    @reactive.Effect
+    async def _load_past_base_values():
+        if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
+            base_info_rv.set({})
+            return
+
+        target = target_var_rv.get()
+        exogs = past_active_exogs()
+        filters = selected_filters_by_var()
+        dates = past_window_dates()
+        model = past_model()
+
+        if not target or not exogs or dates.empty:
+            base_info_rv.set({})
+            return
+
+        temp = target_temporalidad()
+        ws_dt = pd.to_datetime(dates.min(), errors="coerce")
+        we_dt = pd.to_datetime(dates.max(), errors="coerce")
+
+        if pd.isna(ws_dt) or pd.isna(we_dt):
+            base_info_rv.set({})
+            return
+
+        payload = {
+            "target_var": target,
+            "predictors": list(exogs),
+            "filters_by_var": filters,
+            "train_ratio": 0.70,
+            "auto_params": False,
+            "return_df": True,
+            "horizon": len(dates),
+            "scenario_mode": "past",
+            "scenario_window": {
+                "start": ws_dt.strftime("%Y-%m-%d"),
+                "end": we_dt.strftime("%Y-%m-%d"),
+            },
+            "scenario_overrides": [],
+            "scenario_future_values": [],
+        }
+
+        if model == "sarimax":
+            payload.update({"s": 12})
+        elif model == "xgboost":
+            payload.update(
+                {
+                    "use_target_lags": True,
+                    "max_lag": 12,
+                    "recursive_forecast": True,
+                }
+            )
+
+        runner = MODEL_RUNNERS.get(model) or sarimax_run
+
+        try:
+            def _load_base():
+                resp = runner(payload)
+                df_resp = pd.DataFrame(resp.get("df") or [])
+                return _build_past_base_lookup(df_resp, exogs, temp)
+
+            base_info_rv.set(await asyncio.to_thread(_load_base))
+        except Exception:
+            base_info_rv.set({})
+
     def _past_cell_id(exog_name: str, k: int) -> str:
         return stable_id("esc_past_val", f"{exog_name}__P{k}")
 
@@ -2084,9 +2211,12 @@ def escenarios_server(input, output, session):
     def esc_past_exog_table():
         if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
             return ui.div()
+
         exogs = past_active_exogs()
         dates = past_window_dates()
         temp = target_temporalidad()
+        _base_lookup = base_info_rv.get() or {}
+
         if not exogs:
             return ui.tags.div(
                 ui.tags.b("No hay exógenas activas."),
@@ -2095,11 +2225,13 @@ def escenarios_server(input, output, session):
                 ),
                 style="color:#6b7280; margin-top:8px;",
             )
+
         if dates.empty:
             return ui.tags.div(
                 ui.tags.b("Selecciona un rango de fechas válido para ver la tabla."),
                 style="color:#6b7280; margin-top:8px;",
             )
+
         h = len(dates)
         if h > 60:
             return ui.tags.div(
@@ -2109,6 +2241,7 @@ def escenarios_server(input, output, session):
                 ),
                 style="color:#991b1b; margin-top:8px;",
             )
+
         header_cells = [
             ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
         ]
@@ -2122,6 +2255,7 @@ def escenarios_server(input, output, session):
                     ),
                 )
             )
+
         _cell_saved = saved_past_cell_values_rv.get()
 
         body_rows = []
@@ -2135,22 +2269,118 @@ def escenarios_server(input, output, session):
                     ),
                 )
             ]
+
             for k in range(1, h + 1):
                 cid = _past_cell_id(ex, k)
                 _init_val = _cell_saved.get(cid, None)
+
+                prev_key = (ex, dt_str(dates[k - 1], temp, kind="key"))
+                prev_val = _base_lookup.get(prev_key)
+
                 cells.append(
                     ui.tags.td(
-                        ui.input_numeric(cid, label="", value=_init_val, step=0.01),
-                        style="min-width:120px;",
+                        ui.tags.div(
+                            {
+                                "class": "esc-past-num-wrap" + (
+                                    " has-value" if _init_val is not None else ""
+                                )
+                            },
+                            ui.input_numeric(
+                                cid,
+                                label="",
+                                value=_init_val,
+                                step=0.01,
+                            ),
+                            ui.tags.span(
+                                "" if prev_val is None else fmt_num(prev_val, 4),
+                                class_="esc-past-num-ghost",
+                            ),
+                        ),
+                        style="min-width:140px;",
                     )
                 )
+
             body_rows.append(ui.tags.tr(*cells))
+
         return ui.tags.div(
+            ui.tags.style(
+                """
+                .esc-past-num-wrap {
+                    position: relative;
+                    min-width: 140px;
+                }
+
+                .esc-past-num-wrap .form-group,
+                .esc-past-num-wrap .shiny-input-container {
+                    margin-bottom: 0 !important;
+                }
+
+                .esc-past-num-wrap label {
+                    display: none !important;
+                    margin: 0 !important;
+                }
+
+                .esc-past-num-wrap input[type="number"] {
+                    position: relative;
+                    z-index: 2;
+                    background: transparent !important;
+                }
+
+                .esc-past-num-ghost {
+                    position: absolute;
+                    left: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: #94a3b8;
+                    pointer-events: none;
+                    z-index: 1;
+                    white-space: nowrap;
+                }
+
+                .esc-past-num-wrap.has-value .esc-past-num-ghost {
+                    display: none;
+                }
+                """
+            ),
+            ui.tags.script(
+                """
+                if (!window.__escPastGhostInit) {
+                    window.__escPastGhostInit = true;
+
+                    document.addEventListener("input", function(e) {
+                        const el = e.target;
+                        if (!el || el.type !== "number") return;
+
+                        const wrap = el.closest(".esc-past-num-wrap");
+                        if (!wrap) return;
+
+                        if (el.value === "" || el.value === null) {
+                            wrap.classList.remove("has-value");
+                        } else {
+                            wrap.classList.add("has-value");
+                        }
+                    });
+                }
+
+                setTimeout(function() {
+                    document.querySelectorAll(".esc-past-num-wrap input[type='number']").forEach(function(el) {
+                        const wrap = el.closest(".esc-past-num-wrap");
+                        if (!wrap) return;
+
+                        if (el.value === "" || el.value === null) {
+                            wrap.classList.remove("has-value");
+                        } else {
+                            wrap.classList.add("has-value");
+                        }
+                    });
+                }, 0);
+                """
+            ),
             ui.tags.div(
                 ui.tags.b("3) Valores modificados de exógenas"),
                 ui.tags.span(
-                    " (rellena las celdas que quieras modificar; "
-                    "las vacías conservan el valor histórico original)"
+                    " (el valor histórico aparece en gris dentro del input; "
+                    "si escribes un nuevo valor, sustituye al histórico)"
                 ),
                 style="margin-bottom:8px;",
             ),
