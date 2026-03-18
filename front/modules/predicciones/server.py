@@ -28,6 +28,7 @@ from front.utils.utils import (
     build_name_to_table,
     PrediccionesCache,
     compatibilidad_con_objetivo,
+    humanize_error,
     panel_styles,
     create_calendar_filter,
     process_date_range_filters,
@@ -44,6 +45,8 @@ def predicciones_server(input, output, session):
 
     target_var_rv = reactive.Value(None)
     predictors_rv = reactive.Value([])
+    pred_results_rv = reactive.Value(None)
+    pred_results_err_rv = reactive.Value(None)
     _SPINNER_ID = "_pred_spinner"
     saved_filter_values_rv = reactive.Value({})
 
@@ -1216,6 +1219,7 @@ def predicciones_server(input, output, session):
         last = last_sig_rv.get()
         if last is not None and sig != last:
             pred_results_rv.set(None)
+            pred_results_err_rv.set(None)
 
     # ------------------------
     # Cálculo bajo demanda: SOLO al pulsar "Calcula predicción"
@@ -1291,6 +1295,19 @@ def predicciones_server(input, output, session):
 
             result = await asyncio.to_thread(_run_prediction)
             pred_results_rv.set(result)
+            pred_results_err_rv.set(None)
+            last_sig_rv.set(sig)
+        except Exception as e:
+            err_msg = str(e)
+            if hasattr(e, "response"):
+                try:
+                    body = e.response.json()
+                    if "detail" in body:
+                        err_msg = str(body["detail"])
+                except Exception:
+                    pass
+            pred_results_err_rv.set(humanize_error(err_msg))
+            pred_results_rv.set(None)
             last_sig_rv.set(sig)
         finally:
             ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
@@ -1441,12 +1458,24 @@ def predicciones_server(input, output, session):
 
         # Estado: calculando (spinner se inyecta via insert_ui)
 
-        # Estado sin resultados
+        # Estado sin resultados ni errores
+        err = pred_results_err_rv.get()
+
         if res is None:
-            return ui.div(
-                PANEL_STYLES,
-                header,
-                ui.tags.div(
+            status_content = []
+            if err:
+                status_content = [
+                    ui.tags.div(
+                        ui.tags.b("Error: "),
+                        ui.tags.span(err),
+                        style=(
+                            "margin-top: 10px; padding: 10px 12px; border: 1px solid #fecaca; "
+                            "border-radius: 12px; background:#fef2f2; color:#991b1b;"
+                        ),
+                    )
+                ]
+            else:
+                status_content = [
                     ui.tags.div(
                         ui.tags.span("Estado: ", style="font-weight:600;"),
                         ui.tags.span(
@@ -1457,7 +1486,14 @@ def predicciones_server(input, output, session):
                             "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
                             "border-radius: 12px; background:#fafafa;"
                         ),
-                    ),
+                    )
+                ]
+
+            return ui.div(
+                PANEL_STYLES,
+                header,
+                ui.tags.div(
+                    *status_content,
                     id="pred_result_area",
                 ),
                 footer,

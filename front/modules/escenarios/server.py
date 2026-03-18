@@ -26,6 +26,7 @@ from front.utils.utils import (
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
+    humanize_error,
     panel_styles,
     process_date_range_filters,
     slug as _slug,
@@ -1771,7 +1772,15 @@ def escenarios_server(input, output, session):
             last_sig_rv.set(sig)
 
         except Exception as e:
-            scenario_err_rv.set(f"Fallo al calcular: {type(e).__name__}: {e}")
+            err_msg = f"{type(e).__name__}: {e}"
+            if hasattr(e, "response"):
+                try:
+                    body = e.response.json()
+                    if "detail" in body:
+                        err_msg = str(body["detail"])
+                except Exception:
+                    pass
+            scenario_err_rv.set(f"Fallo al calcular: {humanize_error(err_msg)}")
             last_sig_rv.set(sig)
             return
         finally:
@@ -2579,9 +2588,9 @@ def escenarios_server(input, output, session):
                 detail = exc.response.json().get("detail", exc.response.text)
             except Exception:
                 detail = exc.response.text
-            past_scenario_err_rv.set(f"Error backend: {detail}")
+            past_scenario_err_rv.set(f"Fallo al calcular: {humanize_error(detail)}")
         except Exception as e:
-            past_scenario_err_rv.set(f"Error: {type(e).__name__}: {e}")
+            past_scenario_err_rv.set(f"Fallo al calcular: {humanize_error(str(e))}")
         finally:
             ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
 
