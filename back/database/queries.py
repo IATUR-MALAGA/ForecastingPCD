@@ -96,7 +96,7 @@ GET_CATEGORIES = sql.SQL("""
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)
 
 GET_METADATA_FOR_VARIABLE = sql.SQL("""
-    SELECT temporalidad, descripcion, fuente, granularidad, unidad_medida, nombre_colum_ref, nombre_tabla, nombre, operacion_obj
+    SELECT temporalidad, descripcion, fuente, granularidad, unidad_medida, nombre_colum_ref, nombre_tabla, nombre, operacion_obj, decimales
     FROM {}.{}
     WHERE nombre = %s;
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)

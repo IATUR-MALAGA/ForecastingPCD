@@ -163,6 +163,48 @@ def escenarios_server(input, output, session):
             style="overflow:auto; max-height:420px;",
         )
 
+    def _scenario_table_decimals() -> int:
+        """
+        Lee metadata.decimales (binario):
+          - 1 => mostrar 2 decimales
+          - 0 => mostrar 0 decimales
+        Incluye debug por consola para validar lectura.
+        """
+        target = target_var_rv.get()
+        meta = {}
+        raw = None
+        flag = None
+
+        if target:
+            try:
+                meta = cache.get_meta(target) or {}
+                raw = meta.get("decimales", None)
+            except Exception as e:
+                print(
+                    f"[DEBUG decimales][escenarios] error leyendo metadata para {target!r}: {type(e).__name__}: {e}"
+                )
+
+        if isinstance(raw, bool):
+            flag = 1 if raw else 0
+        elif raw is not None:
+            txt = str(raw).strip().lower()
+            if txt in ("1", "true", "t", "si", "sí", "y", "yes"):
+                flag = 1
+            elif txt in ("0", "false", "f", "no", "n"):
+                flag = 0
+            else:
+                try:
+                    flag = 1 if int(float(txt)) == 1 else 0
+                except Exception:
+                    flag = None
+
+        decimals = 2 if flag == 1 else 0 if flag == 0 else 2
+
+        print(
+            f"[DEBUG decimales][escenarios] target={target!r} raw={raw!r} flag={flag!r} applied_decimals={decimals} meta_keys={list(meta.keys()) if isinstance(meta, dict) else None}"
+        )
+        return decimals
+
     def _signed_fmt(value, digits: int = 4, suffix: str = "") -> str:
         if value is None or pd.isna(value):
             return ""
@@ -1811,13 +1853,20 @@ def escenarios_server(input, output, session):
         if not res or res.get("mode") == "past" or res.get("pred_df") is None:
             return ui.div()
 
+        decimals = _scenario_table_decimals()
+
         click = input.esc_fut_plot_click() if "esc_fut_plot_click" in input else None
         if click and click.get("scenario") is not None:
+            click_y = pd.to_numeric(click.get("y"), errors="coerce")
             detail_df = pd.DataFrame(
                 [
                     {
                         "Fecha": click.get("date_label") or "",
-                        "Escenario": click.get("scenario") or "",
+                        "Escenario": (
+                            fmt_num(click_y, decimals)
+                            if pd.notna(click_y)
+                            else (click.get("scenario") or "")
+                        ),
                     }
                 ]
             )
@@ -1832,7 +1881,7 @@ def escenarios_server(input, output, session):
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
             df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
-                lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                lambda v: fmt_num(v, decimals) if pd.notna(v) else v
             )
         return ui.tags.div(
             ui.tags.div(
@@ -2617,14 +2666,21 @@ def escenarios_server(input, output, session):
         if not res or res.get("mode") != "past" or res.get("pred_df") is None:
             return ui.div()
 
+        decimals = _scenario_table_decimals()
+
         click = input.esc_past_plot_click() if "esc_past_plot_click" in input else None
         if click and click.get("scenario") is not None:
+            click_y = pd.to_numeric(click.get("y"), errors="coerce")
             detail_df = pd.DataFrame(
                 [
                     {
                         "Fecha": click.get("date_label") or "",
                         "Valor real": click.get("real") or "",
-                        "Escenario": click.get("scenario") or "",
+                        "Escenario": (
+                            fmt_num(click_y, decimals)
+                            if pd.notna(click_y)
+                            else (click.get("scenario") or "")
+                        ),
                         "Diferencia": click.get("diff") or "",
                         "% Diferencia": click.get("diff_pct") or "",
                     }
@@ -2642,11 +2698,11 @@ def escenarios_server(input, output, session):
         for col in ["Escenario", "Valor real"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").apply(
-                    lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                    lambda v: fmt_num(v, decimals) if pd.notna(v) else v
                 )
         if "Diferencia" in df.columns:
             df["Diferencia"] = pd.to_numeric(df["Diferencia"], errors="coerce").apply(
-                lambda v: _signed_fmt(v, 4) if pd.notna(v) else v
+                lambda v: _signed_fmt(v, decimals) if pd.notna(v) else v
             )
         if "% Diferencia" in df.columns:
             df["% Diferencia"] = pd.to_numeric(df["% Diferencia"], errors="coerce").apply(
