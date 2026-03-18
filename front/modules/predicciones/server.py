@@ -91,6 +91,14 @@ def predicciones_server(input, output, session):
             style="margin:8px 0;",
         )
 
+    @reactive.Effect
+    def _init_target_var():
+        if target_var_rv.get() is None:
+            grouped = _group_by_category(catalog_entries)
+            all_names = [n for names in grouped.values() for n in names]
+            if all_names:
+                target_var_rv.set(all_names[0])
+
     @output
     @render.ui
     def step_panel_1():
@@ -99,9 +107,6 @@ def predicciones_server(input, output, session):
 
         grouped = _group_by_category(catalog_entries)
         all_names = [n for names in grouped.values() for n in names]
-
-        if target_var_rv.get() is None and all_names:
-            target_var_rv.set(all_names[0])
 
         selected = target_var_rv.get()
 
