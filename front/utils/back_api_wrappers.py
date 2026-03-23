@@ -10,24 +10,26 @@ TIMEOUT = float("600")
 
 _client = httpx.Client(base_url=BASE_URL, timeout=TIMEOUT)
 
+
 def _p(seg: str) -> str:
     # para database con espacios, acentos, etc.
     return quote(str(seg), safe="")
+
 
 def _get(path: str, params: Optional[dict] = None) -> Any:
     r = _client.get(path, params=params)
     r.raise_for_status()
     return r.json()
 
+
 def _post(path: str, payload: dict):
-    r = httpx.post(f"{BASE_URL}{path}", json=payload, timeout=120)
+    r = _client.post(path, json=payload)
     try:
         r.raise_for_status()
     except httpx.HTTPStatusError as e:
         print("BACKEND ERROR BODY:", e.response.text)  # <-- ver detalle
         raise
     return r.json()
-
 
 
 ################################################################################################
@@ -68,5 +70,3 @@ def sarimax_run(payload: dict) -> dict:
 
 def xgboost_run(payload: dict) -> dict:
     return _post("/api/models/xgboost/run", payload)
- 
-
