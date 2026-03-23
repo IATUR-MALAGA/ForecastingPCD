@@ -30,7 +30,9 @@ def list_tables(schema: str):
     return get_all_tables_in_schema(schema)
 
 
-@router.get("/schemas/{schema}/tables/{table}/columns", response_model=list[dict[str, Any]])
+@router.get(
+    "/schemas/{schema}/tables/{table}/columns", response_model=list[dict[str, Any]]
+)
 def list_columns(schema: str, table: str):
     schema = ensure_pg_identifier(schema, "schema")
     table = ensure_pg_identifier(table, "table")
@@ -52,7 +54,10 @@ def distinct_values(
     schema: str,
     table: str,
     column: str,
-    complete: bool = Query(False, description="Si True, solo devuelve valores con cobertura temporal completa (sin huecos)."),
+    complete: bool = Query(
+        False,
+        description="Si True, solo devuelve valores con cobertura temporal completa (sin huecos).",
+    ),
 ):
     schema = ensure_pg_identifier(schema, "schema")
     table = ensure_pg_identifier(table, "table")
@@ -64,19 +69,16 @@ def distinct_values(
 
 @router.get("/{nombre}/metadata", response_model=list[dict[str, Any]])
 def variable_metadata(nombre: str):
-    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_metadata_for_variable(nombre)
 
 
 @router.get("/{nombre}/filters", response_model=list[dict[str, Any]])
 def variable_filters(nombre: str):
-    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_filters_for_variable(nombre)
 
 
 @router.get("/{nombre}/table", response_model=list[dict[str, Any]])
 def variable_table(nombre: str):
-    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_tableName_for_variable(nombre)
 
 
