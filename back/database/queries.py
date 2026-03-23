@@ -77,11 +77,6 @@ GET_CATALOG_NAMES = sql.SQL("""
     ORDER BY categoria, nombre;
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)
 
-GET_ALL_DATA_IN_TABLE = """
-    SELECT *
-    FROM "{schema}"."{table}";
-"""
-
 GET_CATEGORIES = sql.SQL("""
     SELECT DISTINCT categoria
     FROM {}.{}
