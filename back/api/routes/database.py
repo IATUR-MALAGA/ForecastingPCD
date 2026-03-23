@@ -64,16 +64,19 @@ def distinct_values(
 
 @router.get("/{nombre}/metadata", response_model=list[dict[str, Any]])
 def variable_metadata(nombre: str):
+    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_metadata_for_variable(nombre)
 
 
 @router.get("/{nombre}/filters", response_model=list[dict[str, Any]])
 def variable_filters(nombre: str):
+    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_filters_for_variable(nombre)
 
 
 @router.get("/{nombre}/table", response_model=list[dict[str, Any]])
 def variable_table(nombre: str):
+    nombre = ensure_pg_identifier(nombre, "nombre")
     return get_tableName_for_variable(nombre)
 
 
@@ -89,4 +92,5 @@ def variable_date_range(
 
 @router.get("/bool-group/{filtro}", response_model=list[dict[str, Any]])
 def bool_group_filters(filtro: str):
+    filtro = ensure_pg_identifier(filtro, "filtro")
     return get_bool_group_filters(filtro)
