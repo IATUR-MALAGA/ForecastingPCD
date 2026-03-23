@@ -34,7 +34,6 @@ def create_sarimax_model(
     )
     results = model.fit()
     return results  # Devuelve el modelo entrenado con train
-0
 
 def predict_sarimax(model_fit, start, end, exog_cols):
     """
