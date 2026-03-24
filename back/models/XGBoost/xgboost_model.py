@@ -110,6 +110,13 @@ def best_xgboost_params(
     print(f"  y_train.shape={y_train.shape} y_train.nan={y_train.isna().sum()}")
 
     X_train = _build_X(df_train, exog_cols, column_y)
+
+    # Drop rows where y_train is NaN (XGBoost cannot fit with NaN targets)
+    nan_mask = y_train.notna()
+    if not nan_mask.all():
+        y_train = y_train[nan_mask]
+        X_train = X_train.loc[nan_mask]
+
     print(f"  X_train.shape={X_train.shape}")
     print("  X_train dtypes (top):")
     print(X_train.dtypes.value_counts())
