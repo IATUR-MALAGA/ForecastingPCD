@@ -7,6 +7,7 @@ from back.config import settings
 
 from .core import fetch_data
 from .queries import (
+    GET_COLUMN_EXISTS_IN_TABLE,
     GET_TABLES_IN_SCHEMA,
     GET_COLUMNS_IN_TABLE,
     GET_CATALOG_NAMES,
@@ -23,6 +24,7 @@ from .queries import (
 # -------------------------
 # Helpers (internos)
 # -------------------------
+
 
 def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
     """
@@ -47,37 +49,116 @@ def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
 # Catalog / metadata
 # -------------------------
 
-def get_all_tables_in_schema(schema: str = settings.get("db.default_schema", "IA")) -> list[str]:
+
+def get_all_tables_in_schema(
+    schema: str = settings.get("db.default_schema", "IA"),
+) -> list[str]:
     rows = fetch_data(GET_TABLES_IN_SCHEMA, (schema,)) or []
     return _as_str_list(rows, key="table_name")
+
 
 def get_table_columns(schema: str, table: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_COLUMNS_IN_TABLE, (schema, table)) or []
 
+
 def get_names_in_table_catalog() -> List[Dict[str, Any]]:
     return fetch_data(GET_CATALOG_NAMES) or []
+
 
 def get_categories_in_catalog() -> List[Dict[str, Any]]:
     return fetch_data(GET_CATEGORIES) or []
 
+
 def get_metadata_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_METADATA_FOR_VARIABLE, (nombre,)) or []
+
+
+def get_variable_definition(nombre: str) -> Optional[Dict[str, Any]]:
+    rows = get_metadata_for_variable(nombre)
+    return rows[0] if rows else None
+
 
 def get_filters_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_FILTERS_FOR_VARIABLE, (nombre, nombre)) or []
 
+
 def get_tableName_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_TABLE_NAME_FOR_VARIABLE, (nombre,)) or []
 
+
 def get_bool_group_filters(filtro: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_BOOL_GROUP_FILTERS, (filtro,)) or []
+
+
+def table_has_column(
+    table: str,
+    column: str,
+    schema: str = settings.get("db.default_schema", "IA"),
+) -> bool:
+    rows = fetch_data(GET_COLUMN_EXISTS_IN_TABLE, (schema, table, column)) or []
+    return bool(rows)
+
+
+def get_aggregated_series(
+    schema: str,
+    table: str,
+    value_col: str,
+    alias: str,
+    time_cols: Sequence[str],
+    where_clauses: Optional[Sequence[sql.Composable]] = None,
+    params: Optional[Sequence[Any]] = None,
+    group_cols: Optional[Sequence[str]] = None,
+    agg: Optional[sql.Composable] = None,
+) -> List[Dict[str, Any]]:
+    group_cols = list(group_cols or [])
+    time_cols = list(time_cols or [])
+    where_clauses = list(where_clauses or [])
+
+    where_sql = (
+        sql.SQL(" AND ").join(where_clauses) if where_clauses else sql.SQL("TRUE")
+    )
+    group_select = sql.SQL("")
+    if group_cols:
+        group_select = sql.SQL(", ").join(
+            sql.Identifier(c) for c in group_cols
+        ) + sql.SQL(", ")
+
+    time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
+    group_by = sql.SQL(", ").join(
+        [
+            *(sql.Identifier(c) for c in group_cols),
+            *(sql.Identifier(c) for c in time_cols),
+        ]
+    )
+    agg = agg or sql.SQL("SUM")
+
+    q = sql.SQL("""
+        SELECT {group_select} {agg}({col}) AS {alias}, {time_select}
+        FROM {schema}.{table}
+        WHERE {where}
+        GROUP BY {group_by}
+    """).format(
+        group_select=group_select,
+        agg=agg,
+        col=sql.Identifier(value_col),
+        alias=sql.Identifier(alias),
+        time_select=time_select,
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        where=where_sql,
+        group_by=group_by,
+    )
+    return fetch_data(q, tuple(params or ())) or []
 
 
 # -------------------------
 # Safe dynamic-table queries
 # -------------------------
 
-def get_date_range_for_variable(nombre_tabla: str, schema: str = settings.get("db.default_schema", "IA")) -> List[Dict[str, Any]]:
+
+def get_date_range_for_variable(
+    nombre_tabla: str, schema: str = settings.get("db.default_schema", "IA")
+) -> List[Dict[str, Any]]:
     try:
         # GET_DATE_RANGE_FOR_VARIABLE ya es sql.SQL(...), así que .format con Identifiers es correcto y seguro.
         q = GET_DATE_RANGE_FOR_VARIABLE.format(
@@ -89,6 +170,7 @@ def get_date_range_for_variable(nombre_tabla: str, schema: str = settings.get("d
     except Exception as e:
         print(f"Error in get_date_range_for_variable: {e}")
         return []
+
 
 def get_distinct_values_for_column(schema: str, table: str, column: str) -> list[str]:
     q = sql.SQL("""
@@ -107,7 +189,9 @@ def get_distinct_values_for_column(schema: str, table: str, column: str) -> list
     return _as_str_list(rows, key="value")
 
 
-def get_distinct_values_complete_range(schema: str, table: str, column: str) -> list[str]:
+def get_distinct_values_complete_range(
+    schema: str, table: str, column: str
+) -> list[str]:
     """
     Devuelve SOLO los valores de `column` que tienen datos en TODOS los meses
     del rango global de la tabla (sin huecos). Reutiliza MES_NUM_CASE.
@@ -169,6 +253,7 @@ def get_distinct_values_complete_range(schema: str, table: str, column: str) -> 
         print(f"[complete_range] fallback para {schema}.{table}.{column}: {e}")
         return get_distinct_values_for_column(schema, table, column)
 
+
 def get_all_data(
     schema: str,
     table: str,
@@ -190,6 +275,7 @@ def get_all_data(
 # Series
 # -------------------------
 
+
 def get_monthly_series_with_filters(
     schema: str,
     table: str,
@@ -203,7 +289,13 @@ def get_monthly_series_with_filters(
     - Aplica filtros usando col::text IN (...), consistente con DISTINCT::text
     """
     agg_u = (agg or "SUM").strip().upper()
-    allowed_aggs = [str(x).upper() for x in settings.get("db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]) or []]
+    allowed_aggs = [
+        str(x).upper()
+        for x in settings.get(
+            "db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]
+        )
+        or []
+    ]
     if agg_u not in set(allowed_aggs):
         raise ValueError(f"Agregación no permitida: {agg}")
 
@@ -283,4 +375,3 @@ def get_monthly_series_with_filters(
     )
 
     return fetch_data(q, tuple(params)) or []
-

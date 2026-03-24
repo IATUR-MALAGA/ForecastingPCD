@@ -2,7 +2,9 @@ from psycopg import sql
 
 from back.config import settings
 
-CATALOG_SCHEMA = settings.get("db.catalog.schema", settings.get("db.default_schema", "IA"))
+CATALOG_SCHEMA = settings.get(
+    "db.catalog.schema", settings.get("db.default_schema", "IA")
+)
 VARIABLES_TABLE = settings.get("db.catalog.variables_table", "tbl_catalogo_variables")
 FILTERS_TABLE = settings.get("db.catalog.filters_table", "tbl_admin_filtro")
 
@@ -69,6 +71,15 @@ GET_COLUMNS_IN_TABLE = """
     WHERE table_schema = %s
       AND table_name = %s
     ORDER BY ordinal_position;
+"""
+
+GET_COLUMN_EXISTS_IN_TABLE = """
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = %s
+      AND table_name = %s
+      AND column_name = %s
+    LIMIT 1;
 """
 
 GET_CATALOG_NAMES = sql.SQL("""
