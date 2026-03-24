@@ -11,7 +11,7 @@ from back.config import settings
 from back.models.SARIMAX.sarimax_model import best_sarimax_params, create_sarimax_model
 from back.models.SARIMAX.sarimax_statistics import compute_metrics
 from back.services.dataframe_selection import create_dataframe_based_on_selection
-from back.utils.column_utils import _find_col, _safe_alias
+from back.utils.column_utils import _find_col, _safe_alias, build_time_index
 from back.utils.time_features import add_fourier_annual_terms
 
 
@@ -105,45 +105,7 @@ def _raise_422(detail: str) -> None:
     raise HTTPException(status_code=422, detail=detail)
 
 
-def _build_time_index(
-    df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, Optional[str], Optional[str], Optional[str]]:
-    dia_col = _find_col(df, "dia", _safe_alias("dia"))
-    mes_col = _find_col(df, "mes", _safe_alias("mes"))
-    ano_col = _find_col(
-        df,
-        "anio",
-        "año",
-        "ano",
-        _safe_alias("anio"),
-        _safe_alias("año"),
-        _safe_alias("ano"),
-    )
-
-    out = df.copy()
-    if ano_col and mes_col and ano_col in out.columns and mes_col in out.columns:
-        day = out[dia_col] if dia_col and dia_col in out.columns else 1
-        out["__dt"] = pd.to_datetime(
-            dict(
-                year=pd.to_numeric(out[ano_col], errors="coerce"),
-                month=pd.to_numeric(out[mes_col], errors="coerce"),
-                day=pd.to_numeric(day, errors="coerce"),
-            ),
-            errors="coerce",
-        )
-    elif isinstance(out.index, pd.DatetimeIndex):
-        out["__dt"] = pd.to_datetime(out.index)
-    elif "fecha" in out.columns:
-        out["__dt"] = pd.to_datetime(out["fecha"], errors="coerce")
-    else:
-        _raise_422("No fue posible construir un time_index robusto")
-
-    out = (
-        out.dropna(subset=["__dt"])
-        .sort_values("__dt", kind="mergesort")
-        .reset_index(drop=True)
-    )
-    return out, dia_col, mes_col, ano_col
+# _build_time_index is now shared via back.utils.column_utils.build_time_index
 
 
 def _get_dataframe(req) -> pd.DataFrame:
@@ -319,7 +281,7 @@ def sarimax_run(req: SarimaxRunRequest):
         y_col = _safe_alias(req.target_var)
         exog_cols = _prepare_exog_cols(req)
 
-        df, dia_col, mes_col, ano_col = _build_time_index(df)
+        df, dia_col, mes_col, ano_col = build_time_index(df)
         df, exog_cols, use_fourier = _maybe_add_fourier(df, req, dia_col, exog_cols)
         df = _force_numeric(df, y_col, exog_cols)
 
