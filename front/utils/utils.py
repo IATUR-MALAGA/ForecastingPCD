@@ -15,7 +15,6 @@ from front.utils.back_api_wrappers import (
     get_date_range_for_variable,
     get_filters_for_variable,
     get_distinct_values_for_column,
-    get_distinct_values_for_column,
     get_table_columns,
     get_metadata_for_variable as get_metadata_for_variable_api,
 )
