@@ -86,7 +86,7 @@ def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
     if isinstance(date_value, str):
         try:
             date_value = datetime.fromisoformat(date_value[:10]).date()
-        except:
+        except (ValueError, TypeError):
             return str(date_value)
 
     if not temporality:
