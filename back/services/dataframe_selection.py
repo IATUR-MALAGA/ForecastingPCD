@@ -5,6 +5,7 @@ from typing import Any, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from fastapi import HTTPException
 from psycopg import sql
 
 from back.config import settings
@@ -141,8 +142,9 @@ def _detect_time_cols(table: str, schema: str = DEFAULT_SCHEMA) -> list[str]:
         if _table_has_column_cached(schema, table, c):
             cols.append(c)
     if not cols:
-        raise ValueError(
-            f'La tabla "{schema}".{table} no tiene columnas temporales (anio/mes/dia).'
+        raise HTTPException(
+            status_code=422,
+            detail=f'La tabla "{schema}".{table} no tiene columnas temporales (anio/mes/dia).',
         )
     return cols
 
