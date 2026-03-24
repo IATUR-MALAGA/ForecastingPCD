@@ -38,7 +38,7 @@ def create_sarimax_model(
             settings.get("models.sarimax.enforce_stationarity", False)
         ),
     )
-    results = model.fit()
+    results = model.fit(disp=False)
     return results  # Devuelve el modelo entrenado con train
 
 
