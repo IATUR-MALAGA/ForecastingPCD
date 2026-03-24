@@ -31,10 +31,9 @@ def add_fourier_annual_terms(
             month=df[mes_col].astype(int),
             day=df[dia_col],
         ),
-        errors="raise",
+        errors="coerce",
     )
-
-    df = df.sort_values(fecha_col)
+    df = df.dropna(subset=[fecha_col]).sort_values(fecha_col)
     t = (df[fecha_col] - df[fecha_col].min()).dt.days.to_numpy()
 
     cols: list[str] = []
