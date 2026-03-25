@@ -61,6 +61,7 @@ def escenarios_server(input, output, session):
     saved_fut_cell_values_rv = reactive.Value(
         {}
     )  # valores de celdas exógenas guardados
+    filters_step_err_rv = reactive.Value(None)
     fut_gen_rv = reactive.Value(
         0
     )  # generación de inputs de celdas (cambia al entrar al panel 4)
@@ -78,6 +79,75 @@ def escenarios_server(input, output, session):
         resolved_target = target_name or target_var_rv.get()
         meta = cache.get_meta(resolved_target) if resolved_target else {}
         return format_catalog_aggregation((meta or {}).get("operacion_obj"))
+
+    def _is_temporal_filter_col(col: str | None) -> bool:
+        return (col or "").lower().strip() in (
+            "anio",
+            "año",
+            "ano",
+            "mes",
+            "dia",
+            "día",
+        )
+
+    def _normalize_filter_values(values) -> list[str]:
+        if not values:
+            return []
+        if isinstance(values, (list, tuple)):
+            return [str(v) for v in values if str(v).strip()]
+        value = str(values).strip()
+        return [value] if value else []
+
+    def _get_filter_values(input_id: str) -> list[str]:
+        if input_id in input:
+            return _normalize_filter_values(input[input_id]())
+        return _normalize_filter_values(saved_filter_values_rv.get().get(input_id, []))
+
+    def _required_filter_specs() -> list[dict]:
+        specs: dict[str, dict] = {}
+        for item in vars_to_config():
+            pretty = item["pretty"]
+            table = item["table"]
+            filtros = cache.get_filters(table)
+            for f in filtros:
+                if _is_temporal_filter_col(f.get("col")):
+                    continue
+                filter_table = f["table"]
+                col = f["col"]
+                input_id = stable_id("flt", f"{filter_table}__{col}")
+                spec = specs.setdefault(
+                    input_id,
+                    {
+                        "input_id": input_id,
+                        "label": f.get("label") or col,
+                        "variables": [],
+                    },
+                )
+                if pretty not in spec["variables"]:
+                    spec["variables"].append(pretty)
+        return list(specs.values())
+
+    def _missing_required_filters_message() -> str | None:
+        missing: list[str] = []
+        for spec in _required_filter_specs():
+            if _get_filter_values(spec["input_id"]):
+                continue
+            vars_label = ", ".join(spec["variables"])
+            missing.append(f"{spec['label']} ({vars_label})")
+        if not missing:
+            return None
+        return (
+            "Debes seleccionar al menos un valor en todos los filtros visibles. "
+            f"Faltan: {'; '.join(missing)}."
+        )
+
+    def _snapshot_filter_values() -> dict[str, list[str]]:
+        saved: dict[str, list[str]] = {}
+        for spec in _required_filter_specs():
+            vals = _get_filter_values(spec["input_id"])
+            if vals:
+                saved[spec["input_id"]] = vals
+        return saved
 
     # Evita registrar múltiples handlers para IDs dinámicos
     _registered_pick_handlers: set[str] = set()
@@ -1207,23 +1277,19 @@ def escenarios_server(input, output, session):
                         )
 
             for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                if _is_temporal_filter_col(f["col"]):
                     continue
 
                 input_id = stable_id("flt", f"{f['table']}__{f['col']}")
-                if input_id in input:
-                    vals = input[input_id]()
-                    if vals:
-                        selected_list.append(
-                            {
-                                "table": f["table"],
-                                "col": f["col"],
-                                "values": list(vals)
-                                if isinstance(vals, (list, tuple))
-                                else [str(vals)],
-                            }
-                        )
+                vals = _get_filter_values(input_id)
+                if vals:
+                    selected_list.append(
+                        {
+                            "table": f["table"],
+                            "col": f["col"],
+                            "values": vals,
+                        }
+                    )
 
             out[pretty] = selected_list
 
@@ -1269,8 +1335,7 @@ def escenarios_server(input, output, session):
                 controls = []
 
                 for f in filtros:
-                    col_lower = f["col"].lower().strip()
-                    if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                    if _is_temporal_filter_col(f["col"]):
                         continue
 
                     t = f["table"]
@@ -1304,7 +1369,7 @@ def escenarios_server(input, output, session):
                                 selected=_saved_val if _saved_val else [],
                                 multiple=True,
                                 options={
-                                    "placeholder": "Selecciona uno o varios valores (vacío = sin filtro)",
+                                    "placeholder": "Selecciona uno o varios valores (obligatorio)",
                                     "plugins": ["remove_button"],
                                 },
                             ),
@@ -1415,12 +1480,27 @@ def escenarios_server(input, output, session):
                     "elegido en la variable objetivo.",
                     style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
                 ),
+                ui.tags.p(
+                    "Todos los filtros visibles son obligatorios.",
+                    style="text-align:center; color:#991b1b; font-weight:600; margin:0 auto 1rem;",
+                ),
                 style="text-align:center; margin-bottom:1rem;",
             ),
             ui.tags.div(
                 target_box,
                 predictors_box,
                 style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;",
+            ),
+            (
+                ui.tags.div(
+                    filters_step_err_rv.get(),
+                    style=(
+                        "margin-bottom:12px; padding:12px 14px; border:1px solid #fecaca; "
+                        "border-radius:12px; background:#fef2f2; color:#991b1b;"
+                    ),
+                )
+                if filters_step_err_rv.get()
+                else ui.div()
             ),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
@@ -1432,29 +1512,18 @@ def escenarios_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_prev_3)
     def _go_step_2():
+        filters_step_err_rv.set(None)
         current_step.set(2)
 
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        saved = {}
-        for item in vars_to_config():
-            t = item["table"]
-            filtros = cache.get_filters(t)
-            for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                    continue
-                input_id = stable_id("flt", f"{t}__{f['col']}")
-                if input_id in input:
-                    vals = input[input_id]()
-                    if vals:
-                        saved[input_id] = (
-                            list(vals)
-                            if isinstance(vals, (list, tuple))
-                            else [str(vals)]
-                        )
-        saved_filter_values_rv.set(saved)
+        err = _missing_required_filters_message()
+        if err:
+            filters_step_err_rv.set(err)
+            return
+        saved_filter_values_rv.set(_snapshot_filter_values())
+        filters_step_err_rv.set(None)
 
         saved_horizon_rv.set(2)
         saved_fut_cell_values_rv.set({})
@@ -1462,6 +1531,11 @@ def escenarios_server(input, output, session):
         scenario_res_rv.set(None)
         scenario_err_rv.set(None)
         current_step.set(4)
+
+    @reactive.Effect
+    def _clear_filters_step_error_when_complete():
+        if filters_step_err_rv.get() and _missing_required_filters_message() is None:
+            filters_step_err_rv.set(None)
 
     # =====================================================================
     # Panel 4: Escenarios FUTUROS (exógenas inventadas por el usuario)
@@ -1830,6 +1904,12 @@ def escenarios_server(input, output, session):
         filters = selected_filters_by_var()
         sig = fut_signature()
         decimals = _scenario_table_decimals()
+
+        filter_err = _missing_required_filters_message()
+        if filter_err:
+            scenario_err_rv.set(filter_err)
+            last_sig_rv.set(sig)
+            return
 
         if not target:
             scenario_err_rv.set("No hay variable objetivo seleccionada.")
@@ -2609,6 +2689,11 @@ def escenarios_server(input, output, session):
         filters = selected_filters_by_var()
         ws, we = past_window_range()
         dates = past_window_dates()
+
+        filter_err = _missing_required_filters_message()
+        if filter_err:
+            past_scenario_err_rv.set(filter_err)
+            return
 
         if not target:
             past_scenario_err_rv.set("No hay variable objetivo seleccionada.")
