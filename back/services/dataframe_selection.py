@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any, Optional, Tuple
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,35 @@ from back.utils.column_utils import _safe_alias
 
 
 DEFAULT_SCHEMA = settings.get("db.default_schema", "IA")
+
+
+def _normalize_catalog_operation(value: str | None) -> str:
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value).strip().lower())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text
+
+
+def resolve_catalog_aggregation(operation: str | None, default: str = "SUM") -> str:
+    normalized = _normalize_catalog_operation(operation)
+    if normalized in ("", "sum", "suma", "total"):
+        return "SUM"
+    if normalized in ("avg", "average", "mean", "media", "promedio"):
+        return "AVG"
+    if normalized in ("min", "minimum", "minimo"):
+        return "MIN"
+    if normalized in ("max", "maximum", "maximo"):
+        return "MAX"
+    return default
+
+
+def get_target_aggregation(nombre: str, cache: Any = None) -> str:
+    if cache and hasattr(cache, "get_meta"):
+        row = cache.get_meta(nombre) or {}
+    else:
+        row = get_variable_definition(nombre) or {}
+    return resolve_catalog_aggregation(row.get("operacion_obj"), default="SUM")
 
 
 def get_col_ref_and_table(nombre: str, cache: Any = None) -> Tuple[str, str, str]:
@@ -195,6 +225,7 @@ def create_dataframe_based_on_selection(
         target_var, cache=cache
     )
     target_alias = _safe_alias(target_name or target_col)
+    target_agg = get_target_aggregation(target_name, cache=cache)
 
     time_cols = _detect_time_cols(target_table)
 
@@ -210,6 +241,7 @@ def create_dataframe_based_on_selection(
         where_clauses=where_clauses_target,
         params=target_params,
         group_cols=group_cols_target,
+        agg=target_agg,
     )
 
     target_cols = [*group_cols_target, target_alias, *time_cols]

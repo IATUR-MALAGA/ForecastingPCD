@@ -45,6 +45,25 @@ def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
     return out
 
 
+def _normalize_aggregation_name(
+    agg: str | sql.Composable | None,
+) -> str | sql.Composable:
+    if isinstance(agg, sql.Composable):
+        return agg
+
+    agg_u = (agg or "SUM").strip().upper()
+    allowed_aggs = [
+        str(x).upper()
+        for x in settings.get(
+            "db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]
+        )
+        or []
+    ]
+    if agg_u not in set(allowed_aggs):
+        raise ValueError(f"Agregacion no permitida: {agg}")
+    return agg_u
+
+
 # -------------------------
 # Catalog / metadata
 # -------------------------
@@ -108,7 +127,7 @@ def get_aggregated_series(
     where_clauses: Optional[Sequence[sql.Composable]] = None,
     params: Optional[Sequence[Any]] = None,
     group_cols: Optional[Sequence[str]] = None,
-    agg: Optional[sql.Composable] = None,
+    agg: Optional[str | sql.Composable] = None,
 ) -> List[Dict[str, Any]]:
     group_cols = list(group_cols or [])
     time_cols = list(time_cols or [])
@@ -130,7 +149,8 @@ def get_aggregated_series(
             *(sql.Identifier(c) for c in time_cols),
         ]
     )
-    agg = agg or sql.SQL("SUM")
+    agg_value = _normalize_aggregation_name(agg)
+    agg_sql = agg_value if isinstance(agg_value, sql.Composable) else sql.SQL(agg_value)
 
     q = sql.SQL("""
         SELECT {group_select} {agg}({col}) AS {alias}, {time_select}
@@ -139,7 +159,7 @@ def get_aggregated_series(
         GROUP BY {group_by}
     """).format(
         group_select=group_select,
-        agg=agg,
+        agg=agg_sql,
         col=sql.Identifier(value_col),
         alias=sql.Identifier(alias),
         time_select=time_select,
@@ -349,16 +369,9 @@ def get_monthly_series_with_filters(
     - Agrega por mes (fecha = primer día del mes)
     - Aplica filtros usando col::text IN (...), consistente con DISTINCT::text
     """
-    agg_u = (agg or "SUM").strip().upper()
-    allowed_aggs = [
-        str(x).upper()
-        for x in settings.get(
-            "db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]
-        )
-        or []
-    ]
-    if agg_u not in set(allowed_aggs):
-        raise ValueError(f"Agregación no permitida: {agg}")
+    agg_u = _normalize_aggregation_name(agg)
+    if isinstance(agg_u, sql.Composable):
+        raise ValueError("La agregacion mensual debe ser textual")
 
     filters = filters or {}
     params: list[Any] = []
