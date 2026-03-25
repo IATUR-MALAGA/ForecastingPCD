@@ -25,6 +25,7 @@ from front.utils.utils import (
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    format_catalog_aggregation,
     metadata_decimals,
     normalize_temporality,
     build_name_to_table,
@@ -56,6 +57,11 @@ def predicciones_server(input, output, session):
     name_to_table = build_name_to_table(catalog_entries)
     cache = PrediccionesCache(name_to_table)
     PANEL_STYLES = panel_styles()
+
+    def _target_aggregation_label(target_name: str | None = None) -> str:
+        resolved_target = target_name or target_var_rv.get()
+        meta = cache.get_meta(resolved_target) if resolved_target else {}
+        return format_catalog_aggregation((meta or {}).get("operacion_obj"))
 
     ##########################################################################################
     # Panel 1: SELECCION DE VARIABLE OBJETIVO
@@ -130,6 +136,7 @@ def predicciones_server(input, output, session):
                         target_var_rv.set(_name)
 
                 meta = cache.get_meta(name)
+                operacion = _target_aggregation_label(name)
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -157,6 +164,11 @@ def predicciones_server(input, output, session):
                             ),
                             ui.tags.div(
                                 ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Agregación automática: "),
+                                        operacion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                     ui.tags.div(
                                         ui.tags.strong("Temporalidad: "),
                                         temporalidad,
@@ -220,6 +232,11 @@ def predicciones_server(input, output, session):
                 ui.tags.span("\u2705 Seleccionada: ", style="font-weight:600;"),
                 ui.tags.span(selected or "—"),
                 class_="selection-pill",
+            ),
+            ui.tags.div(
+                ui.tags.strong("Agregación automática del objetivo: "),
+                _target_aggregation_label(selected),
+                style="color:#475569; margin-bottom:12px;",
             ),
             ui.accordion(*panels, id="acc_target", open=True, multiple=True),
             ui.div(
@@ -1513,6 +1530,8 @@ def predicciones_server(input, output, session):
         m = max_preds_available()
         h = pred_horizon()
         res = pred_results_rv.get()
+        target = target_var_rv.get()
+        target_agg = _target_aggregation_label(target)
 
         # Header (inputs)
         header = ui.card(
@@ -1523,6 +1542,10 @@ def predicciones_server(input, output, session):
                 ui.tags.div(
                     "Elige el modelo y las exógenas. La predicción SOLO se ejecuta al pulsar el botón.",
                     style="color:#6b7280; margin-top:4px; text-align:center;",
+                ),
+                ui.tags.div(
+                    f"Objetivo: {target or '—'} · agregación automática: {target_agg}",
+                    style="color:#475569; margin-top:4px; text-align:center; font-size:0.95rem;",
                 ),
                 style="width:100%;",
             ),

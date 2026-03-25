@@ -26,6 +26,7 @@ from front.utils.utils import (
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    format_catalog_aggregation,
     group_by_category,
     humanize_error,
     metadata_decimals,
@@ -72,6 +73,11 @@ def escenarios_server(input, output, session):
     name_to_table = build_name_to_table(catalog_entries)
     cache = PrediccionesCache(name_to_table)
     PANEL_STYLES = panel_styles()
+
+    def _target_aggregation_label(target_name: str | None = None) -> str:
+        resolved_target = target_name or target_var_rv.get()
+        meta = cache.get_meta(resolved_target) if resolved_target else {}
+        return format_catalog_aggregation((meta or {}).get("operacion_obj"))
 
     # Evita registrar múltiples handlers para IDs dinámicos
     _registered_pick_handlers: set[str] = set()
@@ -673,6 +679,7 @@ def escenarios_server(input, output, session):
                         base_info_rv.set(None)
 
                 meta = cache.get_meta(name)
+                operacion = _target_aggregation_label(name)
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -700,6 +707,11 @@ def escenarios_server(input, output, session):
                             ),
                             ui.tags.div(
                                 ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Agregación automática: "),
+                                        operacion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                     ui.tags.div(
                                         ui.tags.strong("Temporalidad: "),
                                         temporalidad,
@@ -763,6 +775,11 @@ def escenarios_server(input, output, session):
                 ui.tags.span("\u2705 Seleccionada: ", style="font-weight:600;"),
                 ui.tags.span(selected or "—"),
                 class_="selection-pill",
+            ),
+            ui.tags.div(
+                ui.tags.strong("Agregación automática del objetivo: "),
+                _target_aggregation_label(selected),
+                style="color:#475569; margin-bottom:12px;",
             ),
             ui.accordion(*panels, id="esc_acc_target", open=True, multiple=True),
             ui.div(
@@ -2014,11 +2031,18 @@ def escenarios_server(input, output, session):
         with reactive.isolate():
             _init_horizon = saved_horizon_rv.get()
 
+        target = target_var_rv.get()
+        target_agg = _target_aggregation_label(target)
+
         header = ui.card(
             ui.h3("Panel 4: Escenarios futuros", style="margin:0; text-align:center;"),
             ui.tags.div(
                 "1) Periodos · 2) Valores exógenas · 3) Modelo · 4) Calcular",
                 style="color:#6b7280; margin-top:4px; text-align:center;",
+            ),
+            ui.tags.div(
+                f"Objetivo: {target or '—'} · agregación automática: {target_agg}",
+                style="color:#475569; margin-top:4px; text-align:center; font-size:0.95rem;",
             ),
             ui.tags.hr(style="margin:12px 0;"),
             ui.tags.div(
@@ -2861,6 +2885,7 @@ def escenarios_server(input, output, session):
         else:
             default_start = (max_dt - pd.Timedelta(days=30)).date()
         default_start = max(min_date, default_start)
+        target_agg = _target_aggregation_label(target)
 
         # --- 1) Date range selector (using create_calendar_filter) ---
         table = _past_target_table()
@@ -2894,6 +2919,10 @@ def escenarios_server(input, output, session):
                 "Modifica valores históricos de las exógenas y observa "
                 "cómo habría cambiado la predicción.",
                 style="color:#6b7280; margin-top:4px; text-align:center;",
+            ),
+            ui.tags.div(
+                f"Objetivo: {target or '—'} · agregación automática: {target_agg}",
+                style="color:#475569; margin-top:4px; text-align:center; font-size:0.95rem;",
             ),
             ui.tags.hr(style="margin:12px 0;"),
             ui.tags.div(

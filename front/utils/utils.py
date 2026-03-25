@@ -92,6 +92,26 @@ def metadata_decimals(meta: dict | None, default: int = 2) -> int:
         return default
 
 
+def format_catalog_aggregation(operation: str | None, default: str = "Suma") -> str:
+    if operation is None:
+        return default
+
+    text = "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", str(operation).strip().lower())
+        if not unicodedata.combining(ch)
+    )
+    if text in ("", "sum", "suma", "total"):
+        return "Suma"
+    if text in ("avg", "average", "mean", "media", "promedio"):
+        return "Media"
+    if text in ("min", "minimum", "minimo"):
+        return "Minimo"
+    if text in ("max", "maximum", "maximo"):
+        return "Maximo"
+    return str(operation).strip() or default
+
+
 def _repair_text_mojibake(text: str) -> str:
     repaired = text
     for _ in range(2):
