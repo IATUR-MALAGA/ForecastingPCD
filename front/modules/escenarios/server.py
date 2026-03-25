@@ -826,7 +826,6 @@ def escenarios_server(input, output, session):
             return False, "El predictor empieza después de que termine el objetivo"
         return True, ""
 
-    @reactive.Calc
     def _checked_predictors(
         target_name: str | None = None,
         target_meta: dict | None = None,
