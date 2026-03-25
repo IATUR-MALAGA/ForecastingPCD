@@ -27,6 +27,7 @@ from front.utils.utils import (
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
     humanize_error,
+    normalize_temporality,
     panel_styles,
     process_date_range_filters,
     slug as _slug,
@@ -96,7 +97,9 @@ def escenarios_server(input, output, session):
             )
         return pd.to_datetime(df.index, errors="coerce")
 
-    def _build_table_html(df: pd.DataFrame, signed_cols: tuple[str, ...] = ()) -> ui.Tag:
+    def _build_table_html(
+        df: pd.DataFrame, signed_cols: tuple[str, ...] = ()
+    ) -> ui.Tag:
         def _parse_signed_value(val):
             if val is None or pd.isna(val):
                 return None
@@ -110,7 +113,7 @@ def escenarios_server(input, output, session):
                 s.replace("%", "")
                 .replace("\xa0", "")
                 .replace(" ", "")
-                .replace("−", "-")   # minus unicode
+                .replace("−", "-")  # minus unicode
             )
 
             # Normalizar separadores decimales/miles
@@ -148,7 +151,13 @@ def escenarios_server(input, output, session):
                 if col in signed_cols:
                     num = _parse_signed_value(val)
                     if num is not None:
-                        color = "#dc2626" if num < 0 else "#16a34a" if num > 0 else "#475569"
+                        color = (
+                            "#dc2626"
+                            if num < 0
+                            else "#16a34a"
+                            if num > 0
+                            else "#475569"
+                        )
                         style += f" color:{color}; font-weight:600;"
 
                 cells.append(ui.tags.td("" if pd.isna(val) else str(val), style=style))
@@ -217,10 +226,19 @@ def escenarios_server(input, output, session):
         pred_series = pd.Series(pred.values, index=pred_index, name=trace_name)
         pred_series = pred_series[~pd.isna(pred_series.index)]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
         customdata = [
-            [ts.strftime("%d-%m-%Y"), None, fmt_num(val, 4), None, None, trace_name.lower()]
+            [
+                ts.strftime("%d-%m-%Y"),
+                None,
+                fmt_num(val, 4),
+                None,
+                None,
+                trace_name.lower(),
+            ]
             for ts, val in zip(pred_series.index, pred_series.values)
         ]
 
@@ -307,7 +325,9 @@ def escenarios_server(input, output, session):
 
         def _customdata(segment_series, actual, segment_name):
             diff = segment_series - actual
-            diff_pct = ((segment_series - actual) / actual.replace(0, float("nan"))) * 100
+            diff_pct = (
+                (segment_series - actual) / actual.replace(0, float("nan"))
+            ) * 100
             return [
                 [
                     ts.strftime("%d-%m-%Y"),
@@ -326,7 +346,9 @@ def escenarios_server(input, output, session):
                 )
             ]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
 
         fig = go.Figure()
@@ -352,7 +374,9 @@ def escenarios_server(input, output, session):
                     name="Escenario modificado",
                     line={"color": "#f97316", "width": 3},
                     marker={"color": "#f97316", "size": 9},
-                    customdata=_customdata(modified_series, modified_actual, "modificado"),
+                    customdata=_customdata(
+                        modified_series, modified_actual, "modificado"
+                    ),
                     hovertemplate=(
                         "Fecha: %{x|%d-%m-%Y}<br>"
                         "Escenario: %{customdata[2]}<br>"
@@ -432,7 +456,7 @@ def escenarios_server(input, output, session):
     @reactive.Calc
     def target_temporalidad() -> str:
         meta = cache.get_meta(target_var_rv.get()) or {}
-        return str(meta.get("temporalidad", "")).lower()
+        return normalize_temporality(meta.get("temporalidad"))
 
     def is_monthly(temp: str) -> bool:
         t = (temp or "").lower()
@@ -693,7 +717,9 @@ def escenarios_server(input, output, session):
                                 btn_id,
                                 name,
                                 class_=(
-                                    "var-pick is-selected" if selected == name else "var-pick"
+                                    "var-pick is-selected"
+                                    if selected == name
+                                    else "var-pick"
                                 ),
                             ),
                             style="display: flex; align-items: baseline; gap: 6px;",
@@ -749,7 +775,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variable objetivo",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -943,7 +971,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variables predictoras",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1217,7 +1247,9 @@ def escenarios_server(input, output, session):
         target_box_content = (
             ui.div(
                 ui.tags.div(
-                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    ui.tags.span(
+                        target_item["pretty"], style="font-weight:700; font-size:1rem;"
+                    ),
                     style="margin-bottom:8px;",
                 ),
                 _var_body(target_item),
@@ -1261,7 +1293,9 @@ def escenarios_server(input, output, session):
                     ),
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
                 ),
-                ui.accordion(*pred_panels, id="esc_acc_filters_preds", open=True, multiple=True),
+                ui.accordion(
+                    *pred_panels, id="esc_acc_filters_preds", open=True, multiple=True
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -1273,7 +1307,10 @@ def escenarios_server(input, output, session):
                     "📊 Variables predictoras",
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
                 ),
-                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                ui.p(
+                    "No se han seleccionado variables predictoras.",
+                    style="color:#6b7280;",
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -1283,7 +1320,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Configurar filtros",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1613,13 +1652,16 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Fecha", style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;")
+            ui.tags.th(
+                "Fecha",
+                style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;",
+            )
         ]
         for ex in exogs:
             header_cells.append(
                 ui.tags.th(
                     ex,
-                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;"
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
                 )
             )
 
@@ -2019,10 +2061,11 @@ def escenarios_server(input, output, session):
     # =====================================================================
 
     past_scenario_err_rv = reactive.Value(None)
-    saved_past_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados (pasado)
+    saved_past_cell_values_rv = reactive.Value(
+        {}
+    )  # valores de celdas exógenas guardados (pasado)
 
     base_info_rv = reactive.Value({})  # lookup de valores históricos por (exog, fecha)
-
 
     def _build_past_base_lookup(
         df: pd.DataFrame, exogs: list[str], temp: str
@@ -2048,7 +2091,6 @@ def escenarios_server(input, output, session):
                     lookup[(ex, dt_str(dt, temp, kind="key"))] = float(val)
 
         return lookup
-
 
     @reactive.Effect
     async def _load_past_base_values():
@@ -2105,6 +2147,7 @@ def escenarios_server(input, output, session):
         runner = MODEL_RUNNERS.get(model) or sarimax_run
 
         try:
+
             def _load_base():
                 resp = runner(payload)
                 df_resp = pd.DataFrame(resp.get("df") or [])
@@ -2302,13 +2345,16 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Fecha", style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;")
+            ui.tags.th(
+                "Fecha",
+                style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;",
+            )
         ]
         for ex in exogs:
             header_cells.append(
                 ui.tags.th(
                     ex,
-                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;"
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
                 )
             )
 
@@ -2334,16 +2380,11 @@ def escenarios_server(input, output, session):
                     ui.tags.td(
                         ui.tags.div(
                             {
-                                "class": "esc-past-num-wrap" + (
-                                    " has-value" if _init_val is not None else ""
-                                )
+                                "class": "esc-past-num-wrap"
+                                + (" has-value" if _init_val is not None else "")
                             },
                             ui.input_numeric(
-                                cid,
-                                label="",
-                                value=_init_val,
-                                step=0.01,
-                                width="100%"
+                                cid, label="", value=_init_val, step=0.01, width="100%"
                             ),
                             ui.tags.span(
                                 "" if prev_val is None else fmt_num(prev_val, 4),
@@ -2615,7 +2656,9 @@ def escenarios_server(input, output, session):
                     real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
                     pred = pd.to_numeric(pred_df["Escenario"], errors="coerce")
                     pred_df["Diferencia"] = pred - real
-                    pred_df["% Diferencia"] = ((pred - real) / real.replace(0, float("nan"))) * 100
+                    pred_df["% Diferencia"] = (
+                        (pred - real) / real.replace(0, float("nan"))
+                    ) * 100
 
                 return {
                     "model": model,
@@ -2691,7 +2734,9 @@ def escenarios_server(input, output, session):
                     "Punto seleccionado",
                     style="font-weight:600; margin-bottom:8px;",
                 ),
-                _build_table_html(detail_df, signed_cols=("Diferencia", "% Diferencia")),
+                _build_table_html(
+                    detail_df, signed_cols=("Diferencia", "% Diferencia")
+                ),
             )
 
         df = res["pred_df"].copy()
@@ -2705,9 +2750,9 @@ def escenarios_server(input, output, session):
                 lambda v: _signed_fmt(v, decimals) if pd.notna(v) else v
             )
         if "% Diferencia" in df.columns:
-            df["% Diferencia"] = pd.to_numeric(df["% Diferencia"], errors="coerce").apply(
-                lambda v: _signed_fmt(v, 2, "%") if pd.notna(v) else v
-            )
+            df["% Diferencia"] = pd.to_numeric(
+                df["% Diferencia"], errors="coerce"
+            ).apply(lambda v: _signed_fmt(v, 2, "%") if pd.notna(v) else v)
 
         return ui.tags.div(
             ui.tags.div(

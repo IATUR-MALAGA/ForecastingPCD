@@ -1,8 +1,9 @@
 # predicciones/utils.py
-from datetime import date, datetime
-import re
 import hashlib
+import re
+import unicodedata
 from collections import OrderedDict
+from datetime import date, datetime
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
@@ -71,6 +72,81 @@ def fmt_num(value, decimals: int = 2, suffix: str = "") -> str:
     return f"{formatted}{suffix}"
 
 
+def _repair_text_mojibake(text: str) -> str:
+    repaired = text
+    for _ in range(2):
+        for source_encoding in ("latin1", "cp1252"):
+            try:
+                candidate = repaired.encode(source_encoding).decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            if candidate == repaired:
+                continue
+            repaired = candidate
+            break
+        else:
+            break
+    return repaired
+
+
+def normalize_temporality(temporality: str | None) -> str:
+    if temporality is None:
+        return ""
+
+    text = _repair_text_mojibake(str(temporality)).strip().lower()
+    if not text:
+        return ""
+
+    ascii_text = "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(ch)
+    )
+    ascii_text = re.sub(r"[\s_-]+", " ", ascii_text).strip()
+
+    if "trim" in ascii_text or "trimes" in ascii_text or "quart" in ascii_text:
+        return "trimestral"
+    if "mens" in ascii_text or ascii_text == "mes" or "month" in ascii_text:
+        return "mensual"
+    if (
+        "anual" in ascii_text
+        or ascii_text == "ano"
+        or "year" in ascii_text
+        or "annual" in ascii_text
+    ):
+        return "anual"
+    if "seman" in ascii_text or "week" in ascii_text:
+        return "semanal"
+    if (
+        "diar" in ascii_text
+        or ascii_text == "dia"
+        or ascii_text == "day"
+        or "daily" in ascii_text
+    ):
+        return "diaria"
+
+    return ascii_text
+
+
+def shift_date_by_temporality(value, temporality: str | None, steps: int):
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt) or steps == 0:
+        return dt
+
+    temp = normalize_temporality(temporality)
+    if temp == "mensual":
+        return dt + pd.DateOffset(months=steps)
+    if temp == "trimestral":
+        return dt + pd.DateOffset(months=3 * steps)
+    if temp == "anual":
+        return dt + pd.DateOffset(years=steps)
+    if temp == "semanal":
+        return dt + pd.Timedelta(weeks=steps)
+    if temp == "diaria":
+        return dt + pd.Timedelta(days=steps)
+    return dt
+
+
 def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
     """
     Formatea una fecha según la temporalidad.
@@ -91,13 +167,13 @@ def fmt_date_by_temporality(date_value, temporality: str = None) -> str:
     if not temporality:
         return date_value.strftime("%d/%m/%Y")
 
-    temp_lower = temporality.strip().lower()
+    temp_lower = normalize_temporality(temporality)
 
-    if temp_lower in ("mensual", "mes", "monthly", "month"):
+    if temp_lower == "mensual":
         return date_value.strftime("%m/%Y")
-    elif temp_lower in ("diaria", "dia", "día", "daily", "day"):
+    elif temp_lower == "diaria":
         return date_value.strftime("%d/%m/%Y")
-    elif temp_lower in ("anual", "año", "ano", "year", "yearly", "annual"):
+    elif temp_lower == "anual":
         return date_value.strftime("%Y")
     else:
         return date_value.strftime("%d/%m/%Y")
@@ -111,9 +187,11 @@ def check_date_and_temporality(
     temporality_1: str,
     temporality_2: str,
 ) -> bool:
-    if temporality_1 is None or temporality_2 is None:
+    temp_1 = normalize_temporality(temporality_1)
+    temp_2 = normalize_temporality(temporality_2)
+    if not temp_1 or not temp_2:
         return False
-    if temporality_1.strip().lower() != temporality_2.strip().lower():
+    if temp_1 != temp_2:
         return False
 
     s1, e1 = _to_date(start_date_1), _to_date(end_date_1)
@@ -144,30 +222,32 @@ def diff_en_temporalidad(
     if temporality is None:
         return None
 
-    t = temporality.strip().lower()
+    t = normalize_temporality(temporality)
+    if not t:
+        return None
     d1 = _to_date(from_date)
     d2 = _to_date(to_date)
 
     # Mensual
-    if "mens" in t or "mes" in t or "month" in t:
+    if t == "mensual":
         return (d2.year - d1.year) * 12 + (d2.month - d1.month)
 
     # Trimestral / Quarterly
-    if "trim" in t or "trimes" in t or "quart" in t:
+    if t == "trimestral":
         q1 = (d1.month - 1) // 3
         q2 = (d2.month - 1) // 3
         return (d2.year - d1.year) * 4 + (q2 - q1)
 
     # Anual
-    if "anual" in t or "año" in t or "ano" in t or "year" in t:
+    if t == "anual":
         return d2.year - d1.year
 
     # Semanal
-    if "seman" in t or "week" in t:
+    if t == "semanal":
         return (d2 - d1).days // 7
 
     # Diaria
-    if "diar" in t or "día" in t or "dia" in t or "daily" in t or "day" in t:
+    if t == "diaria":
         return (d2 - d1).days
 
     return None
@@ -331,7 +411,7 @@ def compatibilidad_con_objetivo(
 
     if ok:
         return True, ""
-    if pred_temp.strip().lower() != tgt_temp.strip().lower():
+    if normalize_temporality(pred_temp) != normalize_temporality(tgt_temp):
         return False, "Temporalidad distinta"
     return False, "El predictor no cubre el rango del objetivo"
 

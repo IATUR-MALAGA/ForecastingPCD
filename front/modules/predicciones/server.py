@@ -25,9 +25,10 @@ from front.utils.utils import (
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    normalize_temporality,
     build_name_to_table,
     PrediccionesCache,
-    compatibilidad_con_objetivo,
+    shift_date_by_temporality,
     humanize_error,
     panel_styles,
     create_calendar_filter,
@@ -141,7 +142,9 @@ def predicciones_server(input, output, session):
                                 btn_id,
                                 name,
                                 class_=(
-                                    "var-pick is-selected" if name == selected else "var-pick"
+                                    "var-pick is-selected"
+                                    if name == selected
+                                    else "var-pick"
                                 ),
                             ),
                             style="display: flex; align-items: baseline; gap: 6px;",
@@ -197,7 +200,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variable objetivo",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -253,13 +258,13 @@ def predicciones_server(input, output, session):
         if not target_name:
             return False, "Sin objetivo seleccionado"
 
-        pred_temp = predictor_meta.get("temporalidad")
-        tgt_temp = target_meta.get("temporalidad")
+        pred_temp = normalize_temporality(predictor_meta.get("temporalidad"))
+        tgt_temp = normalize_temporality(target_meta.get("temporalidad"))
         pred_start, pred_end = cache.get_date_range(predictor_name)
 
-        if pred_temp is None or tgt_temp is None:
+        if not pred_temp or not tgt_temp:
             return False, "Temporalidad no definida"
-        if pred_temp.strip().lower() != tgt_temp.strip().lower():
+        if pred_temp != tgt_temp:
             return False, "Temporalidad distinta"
         if (
             pred_start is None
@@ -394,7 +399,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variables predictoras",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -470,7 +477,12 @@ def predicciones_server(input, output, session):
             if not (var_id in input and input[var_id]()):
                 continue
 
-            if target_name and target_meta and target_start is not None and target_end is not None:
+            if (
+                target_name
+                and target_meta
+                and target_start is not None
+                and target_end is not None
+            ):
                 p_meta = cache.get_meta(name) or {}
                 selectable, _ = _is_predictor_selectable(
                     predictor_name=name,
@@ -542,24 +554,6 @@ def predicciones_server(input, output, session):
 
         return max(0, n)
 
-    def _shift_date_by_temporality(value, temporality: str, steps: int):
-        dt = pd.to_datetime(value, errors="coerce")
-        if pd.isna(dt) or temporality is None or steps == 0:
-            return dt
-
-        t = temporality.strip().lower()
-        if "mens" in t or "mes" in t or "month" in t:
-            return dt + pd.DateOffset(months=steps)
-        if "trim" in t or "trimes" in t or "quart" in t:
-            return dt + pd.DateOffset(months=3 * steps)
-        if "anual" in t or "aÃƒÂ±o" in t or "ano" in t or "year" in t:
-            return dt + pd.DateOffset(years=steps)
-        if "seman" in t or "week" in t:
-            return dt + pd.Timedelta(weeks=steps)
-        if "diar" in t or "dÃƒÂ­a" in t or "dia" in t or "daily" in t or "day" in t:
-            return dt + pd.Timedelta(days=steps)
-        return dt
-
     @reactive.Effect
     def _sync_predictors_rv():
         predictors_rv.set(selected_predictors())
@@ -622,7 +616,7 @@ def predicciones_server(input, output, session):
         if n is None or n > 0:
             return (target_start, target_end)
 
-        adjusted_end = _shift_date_by_temporality(min_pred_end, tgt_temp, -2)
+        adjusted_end = shift_date_by_temporality(min_pred_end, tgt_temp, -2)
         if pd.isna(adjusted_end):
             return (target_start, target_end)
         if _to_date(adjusted_end) < _to_date(target_start):
@@ -858,7 +852,9 @@ def predicciones_server(input, output, session):
         target_box_content = (
             ui.div(
                 ui.tags.div(
-                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    ui.tags.span(
+                        target_item["pretty"], style="font-weight:700; font-size:1rem;"
+                    ),
                     style="margin-bottom:8px;",
                 ),
                 _var_body(target_item),
@@ -902,7 +898,9 @@ def predicciones_server(input, output, session):
                     ),
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
                 ),
-                ui.accordion(*pred_panels, id="acc_filters_preds", open=True, multiple=True),
+                ui.accordion(
+                    *pred_panels, id="acc_filters_preds", open=True, multiple=True
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -914,7 +912,10 @@ def predicciones_server(input, output, session):
                     "📊 Variables predictoras",
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
                 ),
-                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                ui.p(
+                    "No se han seleccionado variables predictoras.",
+                    style="color:#6b7280;",
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -924,7 +925,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Configurar filtros",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1235,7 +1238,9 @@ def predicciones_server(input, output, session):
         pred_series = pd.Series(pred.values, index=pred_index, name="Predicción")
         pred_series = pred_series[~pd.isna(pred_series.index)]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
 
         customdata = [
