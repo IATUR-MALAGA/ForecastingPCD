@@ -161,11 +161,72 @@ def get_date_range_for_variable(
 ) -> List[Dict[str, Any]]:
     try:
         # GET_DATE_RANGE_FOR_VARIABLE ya es sql.SQL(...), así que .format con Identifiers es correcto y seguro.
-        q = GET_DATE_RANGE_FOR_VARIABLE.format(
-            schema=sql.Identifier(schema),
-            nombre_tabla=sql.Identifier(nombre_tabla),
-            mes_num_case=MES_NUM_CASE,
-        )
+        cols = {
+            c.get("column_name")
+            for c in (get_table_columns(schema, nombre_tabla) or [])
+            if c.get("column_name")
+        }
+
+        if "fecha" in cols:
+            q = sql.SQL("""
+                SELECT
+                    MIN(fecha::date) AS fecha_inicio,
+                    MAX(fecha::date) AS fecha_fin
+                FROM {schema}.{nombre_tabla}
+                WHERE fecha IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+            )
+        elif {"anio", "mes", "dia"}.issubset(cols):
+            q = sql.SQL("""
+                WITH src AS (
+                    SELECT
+                        anio::int AS anio,
+                        lower(trim(mes::text)) AS mes_txt,
+                        dia::int AS dia
+                    FROM {schema}.{nombre_tabla}
+                    WHERE anio IS NOT NULL
+                      AND mes IS NOT NULL
+                      AND dia IS NOT NULL
+                ),
+                t AS (
+                    SELECT
+                        make_date(anio, {mes_num_case}, dia) AS fecha_obs
+                    FROM src
+                    WHERE {mes_num_case} IS NOT NULL
+                      AND dia BETWEEN 1 AND 31
+                )
+                SELECT
+                    MIN(fecha_obs) AS fecha_inicio,
+                    MAX(fecha_obs) AS fecha_fin
+                FROM t
+                WHERE fecha_obs IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+                mes_num_case=MES_NUM_CASE,
+            )
+        elif {"anio", "mes"}.issubset(cols):
+            q = GET_DATE_RANGE_FOR_VARIABLE.format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+                mes_num_case=MES_NUM_CASE,
+            )
+        elif "anio" in cols:
+            q = sql.SQL("""
+                SELECT
+                    MIN(make_date(anio::int, 1, 1)) AS fecha_inicio,
+                    MAX(make_date(anio::int, 12, 31)) AS fecha_fin
+                FROM {schema}.{nombre_tabla}
+                WHERE anio IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+            )
+        else:
+            return []
+
         return fetch_data(q) or []
     except Exception as e:
         print(f"Error in get_date_range_for_variable: {e}")
