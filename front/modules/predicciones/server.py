@@ -25,6 +25,7 @@ from front.utils.utils import (
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    metadata_decimals,
     normalize_temporality,
     build_name_to_table,
     PrediccionesCache,
@@ -1018,46 +1019,9 @@ def predicciones_server(input, output, session):
         return base
 
     def _pred_table_decimals() -> int:
-        """
-        Lee metadata.decimales (binario):
-          - 1 => mostrar 2 decimales
-          - 0 => mostrar 0 decimales
-        Incluye debug por consola para validar lectura.
-        """
         target = target_var_rv.get()
-        meta = {}
-        raw = None
-        flag = None
-
-        if target:
-            try:
-                meta = cache.get_meta(target) or {}
-                raw = meta.get("decimales", None)
-            except Exception as e:
-                print(
-                    f"[DEBUG decimales][predicciones] error leyendo metadata para {target!r}: {type(e).__name__}: {e}"
-                )
-
-        if isinstance(raw, bool):
-            flag = 1 if raw else 0
-        elif raw is not None:
-            txt = str(raw).strip().lower()
-            if txt in ("1", "true", "t", "si", "sí", "y", "yes"):
-                flag = 1
-            elif txt in ("0", "false", "f", "no", "n"):
-                flag = 0
-            else:
-                try:
-                    flag = 1 if int(float(txt)) == 1 else 0
-                except Exception:
-                    flag = None
-
-        decimals = 2 if flag == 1 else 0 if flag == 0 else 2
-
-        print(
-            f"[DEBUG decimales][predicciones] target={target!r} raw={raw!r} flag={flag!r} applied_decimals={decimals} meta_keys={list(meta.keys()) if isinstance(meta, dict) else None}"
-        )
-        return decimals
+        meta = cache.get_meta(target) if target else {}
+        return metadata_decimals(meta)
 
     def _parse_forecast_response(resp: dict):
         df = pd.DataFrame(resp.get("df") or [])
@@ -1232,7 +1196,7 @@ def predicciones_server(input, output, session):
             style="overflow:auto; max-height:420px;",
         )
 
-    def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y):
+    def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y, decimals):
         df_plot = ensure_datetime_index(df)
         pred_index = pd.to_datetime(pred.index, errors="coerce")
         pred_series = pd.Series(pred.values, index=pred_index, name="Predicción")
@@ -1247,7 +1211,7 @@ def predicciones_server(input, output, session):
             [
                 ts.strftime("%d-%m-%Y"),
                 None,
-                fmt_num(val, 4),
+                fmt_num(val, decimals),
                 None,
                 None,
                 "prediccion",
@@ -1263,7 +1227,7 @@ def predicciones_server(input, output, session):
                 mode="lines",
                 name="Real",
                 line={"color": "#1f77b4", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -1275,7 +1239,7 @@ def predicciones_server(input, output, session):
                 line={"color": "#e11d48", "width": 3},
                 marker={"color": "#e11d48", "size": 9},
                 customdata=customdata,
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Predicción: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Predicción: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.update_layout(
@@ -1404,6 +1368,7 @@ def predicciones_server(input, output, session):
         target = target_var_rv.get()
         filters = selected_filters_by_var()
         sig = pred_signature()
+        decimals = _pred_table_decimals()
 
         runner = MODEL_RUNNERS.get(model)
         if runner is None:
@@ -1447,6 +1412,7 @@ def predicciones_server(input, output, session):
                     ylabel="Valores",
                     xlabel="Fecha",
                     column_y=y_col,
+                    decimals=decimals,
                 )
                 return _pack_result(model, resp, fig, pred_df, predictors_used, h)
 
@@ -1504,9 +1470,8 @@ def predicciones_server(input, output, session):
                     {
                         "Fecha": click.get("date_label") or "",
                         "Predicción": (
-                            fmt_num(click_y, decimals)
-                            if pd.notna(click_y)
-                            else (click.get("scenario") or "")
+                            click.get("scenario")
+                            or (fmt_num(click_y, decimals) if pd.notna(click_y) else "")
                         ),
                     }
                 ]

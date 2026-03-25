@@ -72,6 +72,26 @@ def fmt_num(value, decimals: int = 2, suffix: str = "") -> str:
     return f"{formatted}{suffix}"
 
 
+def metadata_decimals(meta: dict | None, default: int = 2) -> int:
+    raw = (meta or {}).get("decimales")
+
+    if isinstance(raw, bool):
+        return 2 if raw else 0
+    if raw is None:
+        return default
+
+    txt = str(raw).strip().lower()
+    if txt in ("1", "true", "t", "si", "sí", "y", "yes"):
+        return 2
+    if txt in ("0", "false", "f", "no", "n"):
+        return 0
+
+    try:
+        return 2 if int(float(txt)) == 1 else 0
+    except (TypeError, ValueError):
+        return default
+
+
 def _repair_text_mojibake(text: str) -> str:
     repaired = text
     for _ in range(2):

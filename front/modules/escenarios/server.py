@@ -28,6 +28,7 @@ from front.utils.utils import (
     fmt_date_by_temporality as _fmt_date_temp,
     group_by_category,
     humanize_error,
+    metadata_decimals,
     normalize_temporality,
     panel_styles,
     process_date_range_filters,
@@ -175,46 +176,9 @@ def escenarios_server(input, output, session):
         )
 
     def _scenario_table_decimals() -> int:
-        """
-        Lee metadata.decimales (binario):
-          - 1 => mostrar 2 decimales
-          - 0 => mostrar 0 decimales
-        Incluye debug por consola para validar lectura.
-        """
         target = target_var_rv.get()
-        meta = {}
-        raw = None
-        flag = None
-
-        if target:
-            try:
-                meta = cache.get_meta(target) or {}
-                raw = meta.get("decimales", None)
-            except Exception as e:
-                print(
-                    f"[DEBUG decimales][escenarios] error leyendo metadata para {target!r}: {type(e).__name__}: {e}"
-                )
-
-        if isinstance(raw, bool):
-            flag = 1 if raw else 0
-        elif raw is not None:
-            txt = str(raw).strip().lower()
-            if txt in ("1", "true", "t", "si", "sí", "y", "yes"):
-                flag = 1
-            elif txt in ("0", "false", "f", "no", "n"):
-                flag = 0
-            else:
-                try:
-                    flag = 1 if int(float(txt)) == 1 else 0
-                except Exception:
-                    flag = None
-
-        decimals = 2 if flag == 1 else 0 if flag == 0 else 2
-
-        print(
-            f"[DEBUG decimales][escenarios] target={target!r} raw={raw!r} flag={flag!r} applied_decimals={decimals} meta_keys={list(meta.keys()) if isinstance(meta, dict) else None}"
-        )
-        return decimals
+        meta = cache.get_meta(target) if target else {}
+        return metadata_decimals(meta)
 
     def _signed_fmt(value, digits: int = 4, suffix: str = "") -> str:
         if value is None or pd.isna(value):
@@ -222,7 +186,9 @@ def escenarios_server(input, output, session):
         prefix = "+" if float(value) > 0 else ""
         return f"{prefix}{fmt_num(float(value), digits, suffix)}"
 
-    def _build_future_plot(df, pred, title, ylabel, xlabel, column_y, trace_name):
+    def _build_future_plot(
+        df, pred, title, ylabel, xlabel, column_y, trace_name, decimals
+    ):
         df_plot = ensure_datetime_index(df)
         pred_index = pd.to_datetime(pred.index, errors="coerce")
         pred_series = pd.Series(pred.values, index=pred_index, name=trace_name)
@@ -236,7 +202,7 @@ def escenarios_server(input, output, session):
             [
                 ts.strftime("%d-%m-%Y"),
                 None,
-                fmt_num(val, 4),
+                fmt_num(val, decimals),
                 None,
                 None,
                 trace_name.lower(),
@@ -252,7 +218,7 @@ def escenarios_server(input, output, session):
                 mode="lines",
                 name="Real",
                 line={"color": "#2563eb", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -264,7 +230,7 @@ def escenarios_server(input, output, session):
                 line={"color": "#e11d48", "width": 3},
                 marker={"color": "#e11d48", "size": 9},
                 customdata=customdata,
-                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>{trace_name}: %{{y:,.4f}}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>{trace_name}: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.update_layout(
@@ -304,6 +270,7 @@ def escenarios_server(input, output, session):
         xlabel,
         column_y,
         window_end,
+        decimals,
         actual_values=None,
     ):
         df_plot = ensure_datetime_index(df)
@@ -333,9 +300,9 @@ def escenarios_server(input, output, session):
             return [
                 [
                     ts.strftime("%d-%m-%Y"),
-                    fmt_num(real, 4) if pd.notna(real) else "",
-                    fmt_num(pred_val, 4),
-                    _signed_fmt(diff_val, 4),
+                    fmt_num(real, decimals) if pd.notna(real) else "",
+                    fmt_num(pred_val, decimals),
+                    _signed_fmt(diff_val, decimals),
                     _signed_fmt(diff_pct_val, 2, "%"),
                     segment_name,
                 ]
@@ -361,7 +328,7 @@ def escenarios_server(input, output, session):
                 mode="lines",
                 name="Valor real",
                 line={"color": "#2563eb", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
 
@@ -1846,6 +1813,7 @@ def escenarios_server(input, output, session):
         model = fut_model()
         filters = selected_filters_by_var()
         sig = fut_signature()
+        decimals = _scenario_table_decimals()
 
         if not target:
             scenario_err_rv.set("No hay variable objetivo seleccionada.")
@@ -1940,6 +1908,7 @@ def escenarios_server(input, output, session):
                     xlabel="Fecha",
                     column_y=y_col,
                     trace_name="Escenario",
+                    decimals=decimals,
                 )
                 pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
                 return {"model": model, "fig": fig, "pred_df": pred_df}
@@ -2004,9 +1973,8 @@ def escenarios_server(input, output, session):
                     {
                         "Fecha": click.get("date_label") or "",
                         "Escenario": (
-                            fmt_num(click_y, decimals)
-                            if pd.notna(click_y)
-                            else (click.get("scenario") or "")
+                            click.get("scenario")
+                            or (fmt_num(click_y, decimals) if pd.notna(click_y) else "")
                         ),
                     }
                 ]
@@ -2458,6 +2426,7 @@ def escenarios_server(input, output, session):
             )
 
         _cell_saved = saved_past_cell_values_rv.get()
+        decimals = _scenario_table_decimals()
 
         body_rows = []
         for k in range(1, h + 1):
@@ -2486,7 +2455,7 @@ def escenarios_server(input, output, session):
                                 cid, label="", value=_init_val, step=0.01, width="100%"
                             ),
                             ui.tags.span(
-                                "" if prev_val is None else fmt_num(prev_val, 4),
+                                "" if prev_val is None else fmt_num(prev_val, decimals),
                                 class_="esc-past-num-ghost",
                             ),
                         ),
@@ -2613,6 +2582,7 @@ def escenarios_server(input, output, session):
         target = target_var_rv.get()
         exogs = past_active_exogs()
         model = past_model()
+        decimals = _scenario_table_decimals()
         filters = selected_filters_by_var()
         ws, we = past_window_range()
         dates = past_window_dates()
@@ -2737,6 +2707,7 @@ def escenarios_server(input, output, session):
                     xlabel="Fecha",
                     column_y=y_col,
                     window_end=we_dt,
+                    decimals=decimals,
                     actual_values=y_true,
                 )
 
@@ -2819,9 +2790,8 @@ def escenarios_server(input, output, session):
                         "Fecha": click.get("date_label") or "",
                         "Valor real": click.get("real") or "",
                         "Escenario": (
-                            fmt_num(click_y, decimals)
-                            if pd.notna(click_y)
-                            else (click.get("scenario") or "")
+                            click.get("scenario")
+                            or (fmt_num(click_y, decimals) if pd.notna(click_y) else "")
                         ),
                         "Diferencia": click.get("diff") or "",
                         "% Diferencia": click.get("diff_pct") or "",
