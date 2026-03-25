@@ -242,6 +242,38 @@ def predicciones_server(input, output, session):
                 pairs.append((var_id, name))
         return pairs
 
+    def _is_predictor_selectable(
+        predictor_name: str,
+        predictor_meta: dict,
+        target_name: str,
+        target_meta: dict,
+        target_start,
+        target_end,
+    ) -> tuple[bool, str]:
+        if not target_name:
+            return False, "Sin objetivo seleccionado"
+
+        pred_temp = predictor_meta.get("temporalidad")
+        tgt_temp = target_meta.get("temporalidad")
+        pred_start, pred_end = cache.get_date_range(predictor_name)
+
+        if pred_temp is None or tgt_temp is None:
+            return False, "Temporalidad no definida"
+        if pred_temp.strip().lower() != tgt_temp.strip().lower():
+            return False, "Temporalidad distinta"
+        if (
+            pred_start is None
+            or pred_end is None
+            or target_start is None
+            or target_end is None
+        ):
+            return False, "Sin rango de fechas"
+        if _to_date(pred_end) < _to_date(target_start):
+            return False, "El predictor termina antes de que empiece el objetivo"
+        if _to_date(pred_start) > _to_date(target_end):
+            return False, "El predictor empieza después de que termine el objetivo"
+        return True, ""
+
     @output
     @render.ui
     def step_panel_2():
@@ -251,10 +283,12 @@ def predicciones_server(input, output, session):
         target_var = target_var_rv.get()
         grouped = _group_by_category(catalog_entries, exclude_name=target_var)
         target_meta = cache.get_meta(target_var) if target_var else {}
-        target_start, target_end = (
-            cache.get_date_range(target_var) if target_var else (None, None)
+        target_start_raw, target_end_raw = (
+            effective_target_range() if target_var else (None, None)
         )
         target_temp = _fmt(target_meta.get("temporalidad"))
+        target_start = _fmt_date_temp(target_start_raw, target_meta.get("temporalidad"))
+        target_end = _fmt_date_temp(target_end_raw, target_meta.get("temporalidad"))
         panels = []
         for cat, names in grouped.items():
             var_blocks = []
@@ -262,14 +296,13 @@ def predicciones_server(input, output, session):
             for name in names:
                 var_id = _stable_id("pred", name)
                 meta = cache.get_meta(name)
-                compat, reason = compatibilidad_con_objetivo(
+                compat, reason = _is_predictor_selectable(
                     predictor_name=name,
                     predictor_meta=meta,
                     target_name=target_var,
                     target_meta=target_meta,
-                    target_start=target_start,
-                    target_end=target_end,
-                    cache=cache,
+                    target_start=target_start_raw,
+                    target_end=target_end_raw,
                 )
 
                 badge = ui.tags.span(
@@ -294,9 +327,10 @@ def predicciones_server(input, output, session):
                 unidad_medida = _fmt(meta.get("unidad_medida"))
                 fuente = _fmt(meta.get("fuente"))
                 descripcion = _fmt(meta.get("descripcion"))
+                current_checked = bool(input[var_id]()) if var_id in input else False
 
                 selector = (
-                    ui.input_checkbox(var_id, name, value=False)
+                    ui.input_checkbox(var_id, name, value=current_checked)
                     if compat
                     else ui.tags.span(name, style="font-weight:600; color:#6e7781;")
                 )
@@ -405,7 +439,7 @@ def predicciones_server(input, output, session):
             return []
 
         target_meta = cache.get_meta(target_var) or {}
-        target_start, target_end = cache.get_date_range(target_var)
+        target_start, target_end = effective_target_range()
 
         selected = []
         for var_id, name in predictor_pairs():
@@ -413,17 +447,43 @@ def predicciones_server(input, output, session):
                 continue
 
             p_meta = cache.get_meta(name) or {}
-            compat, _ = compatibilidad_con_objetivo(
+            compat, _ = _is_predictor_selectable(
                 predictor_name=name,
                 predictor_meta=p_meta,
                 target_name=target_var,
                 target_meta=target_meta,
                 target_start=target_start,
                 target_end=target_end,
-                cache=cache,
             )
             if compat:
                 selected.append(name)
+        return sorted(set(selected))
+
+    def _checked_predictors(
+        target_name: str | None = None,
+        target_meta: dict | None = None,
+        target_start=None,
+        target_end=None,
+    ) -> list[str]:
+        selected = []
+        for var_id, name in predictor_pairs():
+            if not (var_id in input and input[var_id]()):
+                continue
+
+            if target_name and target_meta and target_start is not None and target_end is not None:
+                p_meta = cache.get_meta(name) or {}
+                selectable, _ = _is_predictor_selectable(
+                    predictor_name=name,
+                    predictor_meta=p_meta,
+                    target_name=target_name,
+                    target_meta=target_meta,
+                    target_start=target_start,
+                    target_end=target_end,
+                )
+                if not selectable:
+                    continue
+
+            selected.append(name)
         return sorted(set(selected))
 
     @output
@@ -451,7 +511,7 @@ def predicciones_server(input, output, session):
         target_meta = cache.get_meta(target_var) or {}
         tgt_temp = target_meta.get("temporalidad")
 
-        target_start, target_end = target_selected_range()
+        target_start, target_end = effective_target_range()
         if target_start is None or target_end is None:
             target_start, target_end = cache.get_date_range(target_var)
         if target_end is None or tgt_temp is None:
@@ -465,20 +525,7 @@ def predicciones_server(input, output, session):
         min_pred_end = None
 
         for p in preds:
-            p_meta = cache.get_meta(p) or {}
-            compat, _reason = compatibilidad_con_objetivo(
-                predictor_name=p,
-                predictor_meta=p_meta,
-                target_name=target_var,
-                target_meta=target_meta,
-                target_start=target_start,
-                target_end=target_end,
-                cache=cache,
-            )
             # Si alguna seleccionada no es compatible, no podemos garantizar el horizonte común
-            if not compat:
-                return 0
-
             _p_start, p_end = cache.get_date_range(p)
             if p_end is None:
                 return 0
@@ -494,6 +541,24 @@ def predicciones_server(input, output, session):
             return None
 
         return max(0, n)
+
+    def _shift_date_by_temporality(value, temporality: str, steps: int):
+        dt = pd.to_datetime(value, errors="coerce")
+        if pd.isna(dt) or temporality is None or steps == 0:
+            return dt
+
+        t = temporality.strip().lower()
+        if "mens" in t or "mes" in t or "month" in t:
+            return dt + pd.DateOffset(months=steps)
+        if "trim" in t or "trimes" in t or "quart" in t:
+            return dt + pd.DateOffset(months=3 * steps)
+        if "anual" in t or "aÃƒÂ±o" in t or "ano" in t or "year" in t:
+            return dt + pd.DateOffset(years=steps)
+        if "seman" in t or "week" in t:
+            return dt + pd.Timedelta(weeks=steps)
+        if "diar" in t or "dÃƒÂ­a" in t or "dia" in t or "daily" in t or "day" in t:
+            return dt + pd.Timedelta(days=steps)
+        return dt
 
     @reactive.Effect
     def _sync_predictors_rv():
@@ -519,6 +584,51 @@ def predicciones_server(input, output, session):
         if not target:
             return (None, None)
         return cache.get_date_range(target)
+
+    @reactive.Calc
+    def effective_target_range() -> tuple:
+        target_var = target_var_rv.get()
+        if not target_var:
+            return (None, None)
+
+        target_start, target_end = target_selected_range()
+        if target_start is None or target_end is None:
+            target_start, target_end = cache.get_date_range(target_var)
+
+        target_meta = cache.get_meta(target_var) or {}
+        tgt_temp = target_meta.get("temporalidad")
+        preds = _checked_predictors(
+            target_name=target_var,
+            target_meta=target_meta,
+            target_start=target_start,
+            target_end=target_end,
+        )
+
+        if not preds or target_start is None or target_end is None or tgt_temp is None:
+            return (target_start, target_end)
+
+        min_pred_end = None
+        for predictor in preds:
+            _p_start, p_end = cache.get_date_range(predictor)
+            if p_end is None:
+                return (target_start, target_end)
+            if min_pred_end is None or _to_date(p_end) < _to_date(min_pred_end):
+                min_pred_end = p_end
+
+        if min_pred_end is None:
+            return (target_start, target_end)
+
+        n = diff_en_temporalidad(target_end, min_pred_end, tgt_temp)
+        if n is None or n > 0:
+            return (target_start, target_end)
+
+        adjusted_end = _shift_date_by_temporality(min_pred_end, tgt_temp, -2)
+        if pd.isna(adjusted_end):
+            return (target_start, target_end)
+        if _to_date(adjusted_end) < _to_date(target_start):
+            return (target_start, target_end)
+
+        return (target_start, adjusted_end.date().isoformat())
 
     @reactive.Calc
     def vars_to_config() -> list[dict]:
@@ -575,7 +685,7 @@ def predicciones_server(input, output, session):
             temp = detect_temporal_filters(filtros)
 
             if is_target and (temp["mes"] or temp["dia"]):
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     date_range = (start_def, end_def)
                     temporal_filters = process_date_range_filters(
@@ -586,7 +696,7 @@ def predicciones_server(input, output, session):
                     target_temporal_filters = temporal_filters
 
             elif is_target and temp["anio"]:
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     start_year = pd.to_datetime(start_def, errors="coerce").year
                     end_year = pd.to_datetime(end_def, errors="coerce").year
