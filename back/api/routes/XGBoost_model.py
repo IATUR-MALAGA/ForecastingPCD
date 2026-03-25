@@ -141,33 +141,36 @@ def _recursive_predict(
 # _build_time_index is now shared via back.utils.column_utils.build_time_index
 
 
-def _apply_overrides(
-    df: pd.DataFrame, overrides: list[ScenarioOverride], predictors: list[str]
-) -> pd.DataFrame:
+def _matching_predictor_columns(var_name: str, predictors: list[str], available_cols: pd.Index | list[str]) -> list[str]:
+    available = set(available_cols)
+    return [
+        col
+        for col in predictors
+        if col in available and (col == var_name or col.startswith(f"{var_name}__"))
+    ]
+
+
+def _apply_overrides(df: pd.DataFrame, overrides: list[ScenarioOverride], predictors: list[str]) -> pd.DataFrame:
     out = df.copy()
     for ov in overrides:
         var = _safe_alias(ov.var)
-        if var not in predictors or var not in out.columns:
+        matched_cols = _matching_predictor_columns(var, predictors, out.columns)
+        if not matched_cols:
             continue
         mask = pd.Series(True, index=out.index)
         if ov.start:
             mask &= pd.to_datetime(out["__dt"]) >= pd.to_datetime(ov.start)
         if ov.end:
             mask &= pd.to_datetime(out["__dt"]) <= pd.to_datetime(ov.end)
-        if ov.op == "set":
-            out.loc[mask, var] = float(ov.value)
-        elif ov.op == "add":
-            out.loc[mask, var] = pd.to_numeric(
-                out.loc[mask, var], errors="coerce"
-            ) + float(ov.value)
-        elif ov.op == "mul":
-            out.loc[mask, var] = pd.to_numeric(
-                out.loc[mask, var], errors="coerce"
-            ) * float(ov.value)
-        elif ov.op == "pct":
-            out.loc[mask, var] = pd.to_numeric(out.loc[mask, var], errors="coerce") * (
-                1 + (float(ov.value) / 100.0)
-            )
+        for matched_col in matched_cols:
+            if ov.op == "set":
+                out.loc[mask, matched_col] = float(ov.value)
+            elif ov.op == "add":
+                out.loc[mask, matched_col] = pd.to_numeric(out.loc[mask, matched_col], errors="coerce") + float(ov.value)
+            elif ov.op == "mul":
+                out.loc[mask, matched_col] = pd.to_numeric(out.loc[mask, matched_col], errors="coerce") * float(ov.value)
+            elif ov.op == "pct":
+                out.loc[mask, matched_col] = pd.to_numeric(out.loc[mask, matched_col], errors="coerce") * (1 + (float(ov.value) / 100.0))
     return out
 
 
@@ -236,6 +239,27 @@ def _validate_missing_future(df_future: pd.DataFrame, predictors: list[str]) -> 
         )
 
 
+def _resolve_predictor_columns(df: pd.DataFrame, predictors: list[str]) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+
+    for predictor in predictors or []:
+        base_alias = _safe_alias(predictor)
+        matches = [
+            col
+            for col in df.columns
+            if col == base_alias or col.startswith(f"{base_alias}__")
+        ]
+        candidate_cols = matches or [base_alias]
+        for col in candidate_cols:
+            if col in seen:
+                continue
+            seen.add(col)
+            resolved.append(col)
+
+    return resolved
+
+
 @router.post("/run", response_model=XGBoostRunResponse)
 def xgboost_run(req: XGBoostRunRequest):
     try:
@@ -251,7 +275,7 @@ def xgboost_run(req: XGBoostRunRequest):
             _raise_422("El dataframe resultante está vacío")
 
         y_col = _safe_alias(req.target_var)
-        predictors = [_safe_alias(c) for c in (req.predictors or [])]
+        predictors = _resolve_predictor_columns(df, req.predictors)
         if y_col not in df.columns:
             _raise_422(f"No existe la columna objetivo '{y_col}' en el dataframe")
 
@@ -387,11 +411,12 @@ def xgboost_run(req: XGBoostRunRequest):
 
         for fv in req.scenario_future_values:
             var = _safe_alias(fv.var)
-            if var in predictors:
-                date = _normalize_future_dt(fv.date, monthly_hint)
-                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, var] = float(
-                    fv.value
-                )
+            matched_cols = _matching_predictor_columns(var, predictors, df_future.columns)
+            if not matched_cols:
+                continue
+            date = _normalize_future_dt(fv.date, monthly_hint)
+            for matched_col in matched_cols:
+                df_future.loc[pd.to_datetime(df_future["__dt"]) == date, matched_col] = float(fv.value)
         if predictors:
             df_future = _apply_overrides(
                 df_future,
