@@ -262,6 +262,32 @@ def _validate_missing_future(df_future: pd.DataFrame, exog_cols: list[str]) -> N
         )
 
 
+def _as_int_tuple(values) -> tuple[int, ...]:
+    return tuple(int(v) for v in values)
+
+
+def _json_safe_records(df: pd.DataFrame | None) -> list[dict[str, Any]] | None:
+    if df is None:
+        return None
+
+    out: list[dict[str, Any]] = []
+    for record in df.to_dict(orient="records"):
+        clean: dict[str, Any] = {}
+        for key, value in record.items():
+            if pd.isna(value):
+                clean[key] = None
+            elif isinstance(value, pd.Timestamp):
+                clean[key] = value.isoformat()
+            elif isinstance(value, np.integer):
+                clean[key] = int(value)
+            elif isinstance(value, np.floating):
+                clean[key] = float(value)
+            else:
+                clean[key] = value
+        out.append(clean)
+    return out
+
+
 def _select_params(
     req,
     df_hist: pd.DataFrame,
@@ -290,13 +316,13 @@ def _select_params(
                 periodos_a_predecir=n_test,
                 seasonal=True,
             )
-        return order, seas
+        return _as_int_tuple(order), _as_int_tuple(seas)
 
     default_order = tuple(SARIMAX_CFG.get("default_order", [0, 1, 0]))
     default_seasonal = tuple(SARIMAX_CFG.get("default_seasonal_order", [0, 0, 0, 12]))
     order = req.order or default_order
     seas = (0, 0, 0, 0) if use_fourier else (req.seasonal_order or default_seasonal)
-    return order, seas
+    return _as_int_tuple(order), _as_int_tuple(seas)
 
 
 @router.post("/run", response_model=SarimaxRunResponse)
@@ -385,7 +411,7 @@ def sarimax_run(req: SarimaxRunRequest):
                     "start": ws.strftime("%Y-%m-%d"),
                     "end": we.strftime("%Y-%m-%d"),
                 },
-                df=df.to_dict(orient="records") if req.return_df else None,
+                df=_json_safe_records(df) if req.return_df else None,
             )
 
         horizon = int(
@@ -508,7 +534,7 @@ def sarimax_run(req: SarimaxRunRequest):
             y_forecast=[float(x) for x in list(y_forecast)],
             horizon=horizon,
             n_obs=len(df_hist),
-            df=df_out.to_dict(orient="records") if req.return_df else None,
+            df=_json_safe_records(df_out) if req.return_df else None,
         )
 
     except HTTPException:
