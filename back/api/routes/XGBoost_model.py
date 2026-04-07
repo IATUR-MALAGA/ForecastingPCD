@@ -301,7 +301,7 @@ def xgboost_run(req: XGBoostRunRequest):
             we = pd.to_datetime(req.scenario_window.end)
             hist_dt = pd.to_datetime(df_hist["__dt"])
             train = df_hist[hist_dt < ws].copy()
-            test = df_hist[hist_dt >= ws].copy()
+            test = df_hist[(hist_dt >= ws) & (hist_dt <= we)].copy()
             if train.empty or test.empty:
                 _raise_422("No hay datos suficientes para la ventana solicitada")
             if predictors:
