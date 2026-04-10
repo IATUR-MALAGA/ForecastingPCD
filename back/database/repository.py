@@ -7,6 +7,7 @@ from back.config import settings
 
 from .core import fetch_data
 from .queries import (
+    GET_COLUMN_EXISTS_IN_TABLE,
     GET_TABLES_IN_SCHEMA,
     GET_COLUMNS_IN_TABLE,
     GET_CATALOG_NAMES,
@@ -23,6 +24,7 @@ from .queries import (
 # -------------------------
 # Helpers (internos)
 # -------------------------
+
 
 def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
     """
@@ -43,52 +45,213 @@ def _as_str_list(rows: Sequence[Any], key: str) -> list[str]:
     return out
 
 
+def _normalize_aggregation_name(
+    agg: str | sql.Composable | None,
+) -> str | sql.Composable:
+    if isinstance(agg, sql.Composable):
+        return agg
+
+    agg_u = (agg or "SUM").strip().upper()
+    allowed_aggs = [
+        str(x).upper()
+        for x in settings.get(
+            "db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]
+        )
+        or []
+    ]
+    if agg_u not in set(allowed_aggs):
+        raise ValueError(f"Agregacion no permitida: {agg}")
+    return agg_u
+
+
 # -------------------------
 # Catalog / metadata
 # -------------------------
 
-def get_all_tables_in_schema(schema: str = settings.get("db.default_schema", "IA")) -> list[str]:
+
+def get_all_tables_in_schema(
+    schema: str = settings.get("db.default_schema", "IA"),
+) -> list[str]:
     rows = fetch_data(GET_TABLES_IN_SCHEMA, (schema,)) or []
     return _as_str_list(rows, key="table_name")
+
 
 def get_table_columns(schema: str, table: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_COLUMNS_IN_TABLE, (schema, table)) or []
 
+
 def get_names_in_table_catalog() -> List[Dict[str, Any]]:
     return fetch_data(GET_CATALOG_NAMES) or []
+
 
 def get_categories_in_catalog() -> List[Dict[str, Any]]:
     return fetch_data(GET_CATEGORIES) or []
 
+
 def get_metadata_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_METADATA_FOR_VARIABLE, (nombre,)) or []
+
+
+def get_variable_definition(nombre: str) -> Optional[Dict[str, Any]]:
+    rows = get_metadata_for_variable(nombre)
+    return rows[0] if rows else None
+
 
 def get_filters_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_FILTERS_FOR_VARIABLE, (nombre, nombre)) or []
 
+
 def get_tableName_for_variable(nombre: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_TABLE_NAME_FOR_VARIABLE, (nombre,)) or []
 
+
 def get_bool_group_filters(filtro: str) -> List[Dict[str, Any]]:
     return fetch_data(GET_BOOL_GROUP_FILTERS, (filtro,)) or []
+
+
+def table_has_column(
+    table: str,
+    column: str,
+    schema: str = settings.get("db.default_schema", "IA"),
+) -> bool:
+    rows = fetch_data(GET_COLUMN_EXISTS_IN_TABLE, (schema, table, column)) or []
+    return bool(rows)
+
+
+def get_aggregated_series(
+    schema: str,
+    table: str,
+    value_col: str,
+    alias: str,
+    time_cols: Sequence[str],
+    where_clauses: Optional[Sequence[sql.Composable]] = None,
+    params: Optional[Sequence[Any]] = None,
+    group_cols: Optional[Sequence[str]] = None,
+    agg: Optional[str | sql.Composable] = None,
+) -> List[Dict[str, Any]]:
+    group_cols = list(group_cols or [])
+    time_cols = list(time_cols or [])
+    where_clauses = list(where_clauses or [])
+
+    where_sql = (
+        sql.SQL(" AND ").join(where_clauses) if where_clauses else sql.SQL("TRUE")
+    )
+    group_select = sql.SQL("")
+    if group_cols:
+        group_select = sql.SQL(", ").join(
+            sql.Identifier(c) for c in group_cols
+        ) + sql.SQL(", ")
+
+    time_select = sql.SQL(", ").join(sql.Identifier(c) for c in time_cols)
+    group_by = sql.SQL(", ").join(
+        [
+            *(sql.Identifier(c) for c in group_cols),
+            *(sql.Identifier(c) for c in time_cols),
+        ]
+    )
+    agg_value = _normalize_aggregation_name(agg)
+    agg_sql = agg_value if isinstance(agg_value, sql.Composable) else sql.SQL(agg_value)
+
+    q = sql.SQL("""
+        SELECT {group_select} {agg}({col}) AS {alias}, {time_select}
+        FROM {schema}.{table}
+        WHERE {where}
+        GROUP BY {group_by}
+    """).format(
+        group_select=group_select,
+        agg=agg_sql,
+        col=sql.Identifier(value_col),
+        alias=sql.Identifier(alias),
+        time_select=time_select,
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        where=where_sql,
+        group_by=group_by,
+    )
+    return fetch_data(q, tuple(params or ())) or []
 
 
 # -------------------------
 # Safe dynamic-table queries
 # -------------------------
 
-def get_date_range_for_variable(nombre_tabla: str, schema: str = settings.get("db.default_schema", "IA")) -> List[Dict[str, Any]]:
+
+def get_date_range_for_variable(
+    nombre_tabla: str, schema: str = settings.get("db.default_schema", "IA")
+) -> List[Dict[str, Any]]:
     try:
         # GET_DATE_RANGE_FOR_VARIABLE ya es sql.SQL(...), así que .format con Identifiers es correcto y seguro.
-        q = GET_DATE_RANGE_FOR_VARIABLE.format(
-            schema=sql.Identifier(schema),
-            nombre_tabla=sql.Identifier(nombre_tabla),
-            mes_num_case=MES_NUM_CASE,
-        )
+        cols = {
+            c.get("column_name")
+            for c in (get_table_columns(schema, nombre_tabla) or [])
+            if c.get("column_name")
+        }
+
+        if "fecha" in cols:
+            q = sql.SQL("""
+                SELECT
+                    MIN(fecha::date) AS fecha_inicio,
+                    MAX(fecha::date) AS fecha_fin
+                FROM {schema}.{nombre_tabla}
+                WHERE fecha IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+            )
+        elif {"anio", "mes", "dia"}.issubset(cols):
+            q = sql.SQL("""
+                WITH src AS (
+                    SELECT
+                        anio::int AS anio,
+                        lower(trim(mes::text)) AS mes_txt,
+                        dia::int AS dia
+                    FROM {schema}.{nombre_tabla}
+                    WHERE anio IS NOT NULL
+                      AND mes IS NOT NULL
+                      AND dia IS NOT NULL
+                ),
+                t AS (
+                    SELECT
+                        make_date(anio, {mes_num_case}, dia) AS fecha_obs
+                    FROM src
+                    WHERE {mes_num_case} IS NOT NULL
+                      AND dia BETWEEN 1 AND 31
+                )
+                SELECT
+                    MIN(fecha_obs) AS fecha_inicio,
+                    MAX(fecha_obs) AS fecha_fin
+                FROM t
+                WHERE fecha_obs IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+                mes_num_case=MES_NUM_CASE,
+            )
+        elif {"anio", "mes"}.issubset(cols):
+            q = GET_DATE_RANGE_FOR_VARIABLE.format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+                mes_num_case=MES_NUM_CASE,
+            )
+        elif "anio" in cols:
+            q = sql.SQL("""
+                SELECT
+                    MIN(make_date(anio::int, 1, 1)) AS fecha_inicio,
+                    MAX(make_date(anio::int, 12, 31)) AS fecha_fin
+                FROM {schema}.{nombre_tabla}
+                WHERE anio IS NOT NULL;
+            """).format(
+                schema=sql.Identifier(schema),
+                nombre_tabla=sql.Identifier(nombre_tabla),
+            )
+        else:
+            return []
+
         return fetch_data(q) or []
     except Exception as e:
         print(f"Error in get_date_range_for_variable: {e}")
         return []
+
 
 def get_distinct_values_for_column(schema: str, table: str, column: str) -> list[str]:
     q = sql.SQL("""
@@ -107,7 +270,9 @@ def get_distinct_values_for_column(schema: str, table: str, column: str) -> list
     return _as_str_list(rows, key="value")
 
 
-def get_distinct_values_complete_range(schema: str, table: str, column: str) -> list[str]:
+def get_distinct_values_complete_range(
+    schema: str, table: str, column: str
+) -> list[str]:
     """
     Devuelve SOLO los valores de `column` que tienen datos en TODOS los meses
     del rango global de la tabla (sin huecos). Reutiliza MES_NUM_CASE.
@@ -169,6 +334,7 @@ def get_distinct_values_complete_range(schema: str, table: str, column: str) -> 
         print(f"[complete_range] fallback para {schema}.{table}.{column}: {e}")
         return get_distinct_values_for_column(schema, table, column)
 
+
 def get_all_data(
     schema: str,
     table: str,
@@ -190,6 +356,7 @@ def get_all_data(
 # Series
 # -------------------------
 
+
 def get_monthly_series_with_filters(
     schema: str,
     table: str,
@@ -202,10 +369,9 @@ def get_monthly_series_with_filters(
     - Agrega por mes (fecha = primer día del mes)
     - Aplica filtros usando col::text IN (...), consistente con DISTINCT::text
     """
-    agg_u = (agg or "SUM").strip().upper()
-    allowed_aggs = [str(x).upper() for x in settings.get("db.queries.allowed_aggregations", ["SUM", "AVG", "MIN", "MAX"]) or []]
-    if agg_u not in set(allowed_aggs):
-        raise ValueError(f"Agregación no permitida: {agg}")
+    agg_u = _normalize_aggregation_name(agg)
+    if isinstance(agg_u, sql.Composable):
+        raise ValueError("La agregacion mensual debe ser textual")
 
     filters = filters or {}
     params: list[Any] = []
@@ -283,4 +449,3 @@ def get_monthly_series_with_filters(
     )
 
     return fetch_data(q, tuple(params)) or []
-

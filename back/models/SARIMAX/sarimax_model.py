@@ -11,7 +11,9 @@ def create_sarimax_model(
     exog_cols,
     column_y=settings.get("models.sarimax.target_column", "turistas"),
     order=tuple(settings.get("models.sarimax.default_order", [0, 1, 0])),
-    seasonal_order=tuple(settings.get("models.sarimax.default_seasonal_order", [0, 0, 0, 12])),
+    seasonal_order=tuple(
+        settings.get("models.sarimax.default_seasonal_order", [0, 0, 0, 12])
+    ),
 ):
     """
     Fit a SARIMAX model with exogenous variables and
@@ -29,12 +31,16 @@ def create_sarimax_model(
         exog=exog,
         order=order,
         seasonal_order=seasonal_order,
-        enforce_invertibility=True,
-        enforce_stationarity=True,
+        enforce_invertibility=bool(
+            settings.get("models.sarimax.enforce_invertibility", False)
+        ),
+        enforce_stationarity=bool(
+            settings.get("models.sarimax.enforce_stationarity", False)
+        ),
     )
-    results = model.fit()
+    results = model.fit(disp=False)
     return results  # Devuelve el modelo entrenado con train
-0
+
 
 def predict_sarimax(model_fit, start, end, exog_cols):
     """
@@ -51,7 +57,9 @@ def best_sarimax_params(
     exog_cols,
     column_y=settings.get("models.sarimax.target_column", "turistas"),
     s=int(settings.get("models.sarimax.seasonal_period_s", 12)),
-    periodos_a_predecir=int(settings.get("models.sarimax.auto_search.periodos_a_predecir", 2)),
+    periodos_a_predecir=int(
+        settings.get("models.sarimax.auto_search.periodos_a_predecir", 2)
+    ),
     seasonal=bool(settings.get("models.sarimax.auto_search.seasonal", True)),
 ):
     p_values = settings.get("models.sarimax.auto_search.p_values", [0, 2])
@@ -108,10 +116,13 @@ def best_sarimax_params(
             test=settings.get("models.sarimax.auto_search.test", "adf"),
             stepwise=bool(settings.get("models.sarimax.auto_search.stepwise", True)),
             trace=bool(settings.get("models.sarimax.auto_search.trace", True)),
-            error_action=settings.get("models.sarimax.auto_search.error_action", "trace"),
-            suppress_warnings=bool(settings.get("models.sarimax.auto_search.suppress_warnings", False)),
+            error_action=settings.get(
+                "models.sarimax.auto_search.error_action", "trace"
+            ),
+            suppress_warnings=bool(
+                settings.get("models.sarimax.auto_search.suppress_warnings", False)
+            ),
         )
-
 
     except Exception:
         traceback.print_exc()

@@ -25,9 +25,13 @@ from front.utils.utils import (
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    format_catalog_aggregation,
+    metadata_decimals,
+    normalize_temporality,
     build_name_to_table,
     PrediccionesCache,
-    compatibilidad_con_objetivo,
+    shift_date_by_temporality,
+    humanize_error,
     panel_styles,
     create_calendar_filter,
     process_date_range_filters,
@@ -44,13 +48,90 @@ def predicciones_server(input, output, session):
 
     target_var_rv = reactive.Value(None)
     predictors_rv = reactive.Value([])
+    pred_results_rv = reactive.Value(None)
+    pred_results_err_rv = reactive.Value(None)
     _SPINNER_ID = "_pred_spinner"
     saved_filter_values_rv = reactive.Value({})
+    filters_step_err_rv = reactive.Value(None)
 
     catalog_entries = get_names_in_table_catalog() or []
     name_to_table = build_name_to_table(catalog_entries)
     cache = PrediccionesCache(name_to_table)
     PANEL_STYLES = panel_styles()
+
+    def _target_aggregation_label(target_name: str | None = None) -> str:
+        resolved_target = target_name or target_var_rv.get()
+        meta = cache.get_meta(resolved_target) if resolved_target else {}
+        return format_catalog_aggregation((meta or {}).get("operacion_obj"))
+
+    def _is_temporal_filter_col(col: str | None) -> bool:
+        return (col or "").lower().strip() in (
+            "anio",
+            "año",
+            "ano",
+            "mes",
+            "dia",
+            "día",
+        )
+
+    def _normalize_filter_values(values) -> list[str]:
+        if not values:
+            return []
+        if isinstance(values, (list, tuple)):
+            return [str(v) for v in values if str(v).strip()]
+        value = str(values).strip()
+        return [value] if value else []
+
+    def _get_filter_values(input_id: str) -> list[str]:
+        if input_id in input:
+            return _normalize_filter_values(input[input_id]())
+        return _normalize_filter_values(saved_filter_values_rv.get().get(input_id, []))
+
+    def _required_filter_specs() -> list[dict]:
+        specs: dict[str, dict] = {}
+        for item in vars_to_config():
+            pretty = item["pretty"]
+            table = item["table"]
+            filtros = cache.get_filters(table)
+            for f in filtros:
+                if _is_temporal_filter_col(f.get("col")):
+                    continue
+                filter_table = f["table"]
+                col = f["col"]
+                input_id = _stable_id("flt", f"{filter_table}__{col}")
+                spec = specs.setdefault(
+                    input_id,
+                    {
+                        "input_id": input_id,
+                        "label": f.get("label") or col,
+                        "variables": [],
+                    },
+                )
+                if pretty not in spec["variables"]:
+                    spec["variables"].append(pretty)
+        return list(specs.values())
+
+    def _missing_required_filters_message() -> str | None:
+        missing: list[str] = []
+        for spec in _required_filter_specs():
+            if _get_filter_values(spec["input_id"]):
+                continue
+            vars_label = ", ".join(spec["variables"])
+            missing.append(f"{spec['label']} ({vars_label})")
+        if not missing:
+            return None
+        return (
+            "Debes seleccionar al menos un valor en todos los filtros visibles. "
+            f"Faltan: {'; '.join(missing)}."
+        )
+
+    def _snapshot_filter_values() -> dict[str, list[str]]:
+        saved: dict[str, list[str]] = {}
+        for spec in _required_filter_specs():
+            vals = _get_filter_values(spec["input_id"])
+            if vals:
+                saved[spec["input_id"]] = vals
+        return saved
 
     ##########################################################################################
     # Panel 1: SELECCION DE VARIABLE OBJETIVO
@@ -91,6 +172,14 @@ def predicciones_server(input, output, session):
             style="margin:8px 0;",
         )
 
+    @reactive.Effect
+    def _init_target_var():
+        if target_var_rv.get() is None:
+            grouped = _group_by_category(catalog_entries)
+            all_names = [n for names in grouped.values() for n in names]
+            if all_names:
+                target_var_rv.set(all_names[0])
+
     @output
     @render.ui
     def step_panel_1():
@@ -99,9 +188,6 @@ def predicciones_server(input, output, session):
 
         grouped = _group_by_category(catalog_entries)
         all_names = [n for names in grouped.values() for n in names]
-
-        if target_var_rv.get() is None and all_names:
-            target_var_rv.set(all_names[0])
 
         selected = target_var_rv.get()
 
@@ -120,6 +206,7 @@ def predicciones_server(input, output, session):
                         target_var_rv.set(_name)
 
                 meta = cache.get_meta(name)
+                operacion = _target_aggregation_label(name)
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -147,6 +234,11 @@ def predicciones_server(input, output, session):
                             ),
                             ui.tags.div(
                                 ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Agregación automática: "),
+                                        operacion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                     ui.tags.div(
                                         ui.tags.strong("Temporalidad: "),
                                         temporalidad,
@@ -211,6 +303,11 @@ def predicciones_server(input, output, session):
                 ui.tags.span(selected or "—"),
                 class_="selection-pill",
             ),
+            ui.tags.div(
+                ui.tags.strong("Agregación automática del objetivo: "),
+                _target_aggregation_label(selected),
+                style="color:#475569; margin-bottom:12px;",
+            ),
             ui.accordion(*panels, id="acc_target", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("btn_next_1", "Siguiente →"),
@@ -238,6 +335,38 @@ def predicciones_server(input, output, session):
                 pairs.append((var_id, name))
         return pairs
 
+    def _is_predictor_selectable(
+        predictor_name: str,
+        predictor_meta: dict,
+        target_name: str,
+        target_meta: dict,
+        target_start,
+        target_end,
+    ) -> tuple[bool, str]:
+        if not target_name:
+            return False, "Sin objetivo seleccionado"
+
+        pred_temp = normalize_temporality(predictor_meta.get("temporalidad"))
+        tgt_temp = normalize_temporality(target_meta.get("temporalidad"))
+        pred_start, pred_end = cache.get_date_range(predictor_name)
+
+        if not pred_temp or not tgt_temp:
+            return False, "Temporalidad no definida"
+        if pred_temp != tgt_temp:
+            return False, "Temporalidad distinta"
+        if (
+            pred_start is None
+            or pred_end is None
+            or target_start is None
+            or target_end is None
+        ):
+            return False, "Sin rango de fechas"
+        if _to_date(pred_end) < _to_date(target_start):
+            return False, "El predictor termina antes de que empiece el objetivo"
+        if _to_date(pred_start) > _to_date(target_end):
+            return False, "El predictor empieza después de que termine el objetivo"
+        return True, ""
+
     @output
     @render.ui
     def step_panel_2():
@@ -247,10 +376,12 @@ def predicciones_server(input, output, session):
         target_var = target_var_rv.get()
         grouped = _group_by_category(catalog_entries, exclude_name=target_var)
         target_meta = cache.get_meta(target_var) if target_var else {}
-        target_start, target_end = (
-            cache.get_date_range(target_var) if target_var else (None, None)
+        target_start_raw, target_end_raw = (
+            effective_target_range() if target_var else (None, None)
         )
         target_temp = _fmt(target_meta.get("temporalidad"))
+        target_start = _fmt_date_temp(target_start_raw, target_meta.get("temporalidad"))
+        target_end = _fmt_date_temp(target_end_raw, target_meta.get("temporalidad"))
         panels = []
         for cat, names in grouped.items():
             var_blocks = []
@@ -258,14 +389,13 @@ def predicciones_server(input, output, session):
             for name in names:
                 var_id = _stable_id("pred", name)
                 meta = cache.get_meta(name)
-                compat, reason = compatibilidad_con_objetivo(
+                compat, reason = _is_predictor_selectable(
                     predictor_name=name,
                     predictor_meta=meta,
                     target_name=target_var,
                     target_meta=target_meta,
-                    target_start=target_start,
-                    target_end=target_end,
-                    cache=cache,
+                    target_start=target_start_raw,
+                    target_end=target_end_raw,
                 )
 
                 badge = ui.tags.span(
@@ -290,9 +420,10 @@ def predicciones_server(input, output, session):
                 unidad_medida = _fmt(meta.get("unidad_medida"))
                 fuente = _fmt(meta.get("fuente"))
                 descripcion = _fmt(meta.get("descripcion"))
+                current_checked = bool(input[var_id]()) if var_id in input else False
 
                 selector = (
-                    ui.input_checkbox(var_id, name, value=False)
+                    ui.input_checkbox(var_id, name, value=current_checked)
                     if compat
                     else ui.tags.span(name, style="font-weight:600; color:#6e7781;")
                 )
@@ -403,7 +534,7 @@ def predicciones_server(input, output, session):
             return []
 
         target_meta = cache.get_meta(target_var) or {}
-        target_start, target_end = cache.get_date_range(target_var)
+        target_start, target_end = effective_target_range()
 
         selected = []
         for var_id, name in predictor_pairs():
@@ -411,17 +542,48 @@ def predicciones_server(input, output, session):
                 continue
 
             p_meta = cache.get_meta(name) or {}
-            compat, _ = compatibilidad_con_objetivo(
+            compat, _ = _is_predictor_selectable(
                 predictor_name=name,
                 predictor_meta=p_meta,
                 target_name=target_var,
                 target_meta=target_meta,
                 target_start=target_start,
                 target_end=target_end,
-                cache=cache,
             )
             if compat:
                 selected.append(name)
+        return sorted(set(selected))
+
+    def _checked_predictors(
+        target_name: str | None = None,
+        target_meta: dict | None = None,
+        target_start=None,
+        target_end=None,
+    ) -> list[str]:
+        selected = []
+        for var_id, name in predictor_pairs():
+            if not (var_id in input and input[var_id]()):
+                continue
+
+            if (
+                target_name
+                and target_meta
+                and target_start is not None
+                and target_end is not None
+            ):
+                p_meta = cache.get_meta(name) or {}
+                selectable, _ = _is_predictor_selectable(
+                    predictor_name=name,
+                    predictor_meta=p_meta,
+                    target_name=target_name,
+                    target_meta=target_meta,
+                    target_start=target_start,
+                    target_end=target_end,
+                )
+                if not selectable:
+                    continue
+
+            selected.append(name)
         return sorted(set(selected))
 
     @output
@@ -449,7 +611,7 @@ def predicciones_server(input, output, session):
         target_meta = cache.get_meta(target_var) or {}
         tgt_temp = target_meta.get("temporalidad")
 
-        target_start, target_end = target_selected_range()
+        target_start, target_end = effective_target_range()
         if target_start is None or target_end is None:
             target_start, target_end = cache.get_date_range(target_var)
         if target_end is None or tgt_temp is None:
@@ -463,20 +625,7 @@ def predicciones_server(input, output, session):
         min_pred_end = None
 
         for p in preds:
-            p_meta = cache.get_meta(p) or {}
-            compat, _reason = compatibilidad_con_objetivo(
-                predictor_name=p,
-                predictor_meta=p_meta,
-                target_name=target_var,
-                target_meta=target_meta,
-                target_start=target_start,
-                target_end=target_end,
-                cache=cache,
-            )
             # Si alguna seleccionada no es compatible, no podemos garantizar el horizonte común
-            if not compat:
-                return 0
-
             _p_start, p_end = cache.get_date_range(p)
             if p_end is None:
                 return 0
@@ -517,6 +666,51 @@ def predicciones_server(input, output, session):
         if not target:
             return (None, None)
         return cache.get_date_range(target)
+
+    @reactive.Calc
+    def effective_target_range() -> tuple:
+        target_var = target_var_rv.get()
+        if not target_var:
+            return (None, None)
+
+        target_start, target_end = target_selected_range()
+        if target_start is None or target_end is None:
+            target_start, target_end = cache.get_date_range(target_var)
+
+        target_meta = cache.get_meta(target_var) or {}
+        tgt_temp = target_meta.get("temporalidad")
+        preds = _checked_predictors(
+            target_name=target_var,
+            target_meta=target_meta,
+            target_start=target_start,
+            target_end=target_end,
+        )
+
+        if not preds or target_start is None or target_end is None or tgt_temp is None:
+            return (target_start, target_end)
+
+        min_pred_end = None
+        for predictor in preds:
+            _p_start, p_end = cache.get_date_range(predictor)
+            if p_end is None:
+                return (target_start, target_end)
+            if min_pred_end is None or _to_date(p_end) < _to_date(min_pred_end):
+                min_pred_end = p_end
+
+        if min_pred_end is None:
+            return (target_start, target_end)
+
+        n = diff_en_temporalidad(target_end, min_pred_end, tgt_temp)
+        if n is None or n > 0:
+            return (target_start, target_end)
+
+        adjusted_end = shift_date_by_temporality(min_pred_end, tgt_temp, -2)
+        if pd.isna(adjusted_end):
+            return (target_start, target_end)
+        if _to_date(adjusted_end) < _to_date(target_start):
+            return (target_start, target_end)
+
+        return (target_start, adjusted_end.date().isoformat())
 
     @reactive.Calc
     def vars_to_config() -> list[dict]:
@@ -573,7 +767,7 @@ def predicciones_server(input, output, session):
             temp = detect_temporal_filters(filtros)
 
             if is_target and (temp["mes"] or temp["dia"]):
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     date_range = (start_def, end_def)
                     temporal_filters = process_date_range_filters(
@@ -584,7 +778,7 @@ def predicciones_server(input, output, session):
                     target_temporal_filters = temporal_filters
 
             elif is_target and temp["anio"]:
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     start_year = pd.to_datetime(start_def, errors="coerce").year
                     end_year = pd.to_datetime(end_def, errors="coerce").year
@@ -627,8 +821,7 @@ def predicciones_server(input, output, session):
                         )
 
             for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                if _is_temporal_filter_col(f["col"]):
                     continue
 
                 input_id = _stable_id("flt", f"{f['table']}__{f['col']}")
@@ -688,8 +881,7 @@ def predicciones_server(input, output, session):
                 controls = []
 
                 for f in filtros:
-                    col_lower = f["col"].lower().strip()
-                    if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                    if _is_temporal_filter_col(f["col"]):
                         continue
 
                     t = f["table"]
@@ -723,7 +915,7 @@ def predicciones_server(input, output, session):
                                 selected=_saved_val if _saved_val else [],
                                 multiple=True,
                                 options={
-                                    "placeholder": "Selecciona uno o varios valores (vacío = sin filtro)",
+                                    "placeholder": "Selecciona uno o varios valores (obligatorio)",
                                     "plugins": ["remove_button"],
                                 },
                             ),
@@ -834,12 +1026,27 @@ def predicciones_server(input, output, session):
                     "variable objetivo.",
                     style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
                 ),
+                ui.tags.p(
+                    "Todos los filtros visibles son obligatorios.",
+                    style="text-align:center; color:#991b1b; font-weight:600; margin:0 auto 1rem;",
+                ),
                 style="text-align:center; margin-bottom:1rem;",
             ),
             ui.tags.div(
                 target_box,
                 predictors_box,
                 style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;",
+            ),
+            (
+                ui.tags.div(
+                    filters_step_err_rv.get(),
+                    style=(
+                        "margin-bottom:12px; padding:12px 14px; border:1px solid #fecaca; "
+                        "border-radius:12px; background:#fef2f2; color:#991b1b;"
+                    ),
+                )
+                if filters_step_err_rv.get()
+                else ui.div()
             ),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
@@ -851,30 +1058,24 @@ def predicciones_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_prev_3)
     def _go_step_2():
+        filters_step_err_rv.set(None)
         current_step.set(2)
 
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        saved = {}
-        for item in vars_to_config():
-            t = item["table"]
-            filtros = cache.get_filters(t)
-            for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                    continue
-                input_id = _stable_id("flt", f"{t}__{f['col']}")
-                if input_id in input:
-                    vals = input[input_id]()
-                    if vals:
-                        saved[input_id] = (
-                            list(vals)
-                            if isinstance(vals, (list, tuple))
-                            else [str(vals)]
-                        )
-        saved_filter_values_rv.set(saved)
+        err = _missing_required_filters_message()
+        if err:
+            filters_step_err_rv.set(err)
+            return
+        saved_filter_values_rv.set(_snapshot_filter_values())
+        filters_step_err_rv.set(None)
         current_step.set(4)
+
+    @reactive.Effect
+    def _clear_filters_step_error_when_complete():
+        if filters_step_err_rv.get() and _missing_required_filters_message() is None:
+            filters_step_err_rv.set(None)
 
     ##########################################################################################
     # Panel 4: Play with Model and Variables (CON BOTÓN: NO calcula hasta pulsar)
@@ -912,6 +1113,11 @@ def predicciones_server(input, output, session):
                 }
             )
         return base
+
+    def _pred_table_decimals() -> int:
+        target = target_var_rv.get()
+        meta = cache.get_meta(target) if target else {}
+        return metadata_decimals(meta)
 
     def _parse_forecast_response(resp: dict):
         df = pd.DataFrame(resp.get("df") or [])
@@ -1086,7 +1292,7 @@ def predicciones_server(input, output, session):
             style="overflow:auto; max-height:420px;",
         )
 
-    def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y):
+    def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y, decimals):
         df_plot = ensure_datetime_index(df)
         pred_index = pd.to_datetime(pred.index, errors="coerce")
         pred_series = pd.Series(pred.values, index=pred_index, name="Predicción")
@@ -1101,7 +1307,7 @@ def predicciones_server(input, output, session):
             [
                 ts.strftime("%d-%m-%Y"),
                 None,
-                fmt_num(val, 4),
+                fmt_num(val, decimals),
                 None,
                 None,
                 "prediccion",
@@ -1117,7 +1323,7 @@ def predicciones_server(input, output, session):
                 mode="lines",
                 name="Real",
                 line={"color": "#1f77b4", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -1129,7 +1335,7 @@ def predicciones_server(input, output, session):
                 line={"color": "#e11d48", "width": 3},
                 marker={"color": "#e11d48", "size": 9},
                 customdata=customdata,
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Predicción: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Predicción: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.update_layout(
@@ -1230,6 +1436,7 @@ def predicciones_server(input, output, session):
         last = last_sig_rv.get()
         if last is not None and sig != last:
             pred_results_rv.set(None)
+            pred_results_err_rv.set(None)
 
     # ------------------------
     # Cálculo bajo demanda: SOLO al pulsar "Calcula predicción"
@@ -1257,6 +1464,14 @@ def predicciones_server(input, output, session):
         target = target_var_rv.get()
         filters = selected_filters_by_var()
         sig = pred_signature()
+        decimals = _pred_table_decimals()
+
+        filter_err = _missing_required_filters_message()
+        if filter_err:
+            pred_results_rv.set(None)
+            pred_results_err_rv.set(filter_err)
+            last_sig_rv.set(sig)
+            return
 
         runner = MODEL_RUNNERS.get(model)
         if runner is None:
@@ -1300,11 +1515,25 @@ def predicciones_server(input, output, session):
                     ylabel="Valores",
                     xlabel="Fecha",
                     column_y=y_col,
+                    decimals=decimals,
                 )
                 return _pack_result(model, resp, fig, pred_df, predictors_used, h)
 
             result = await asyncio.to_thread(_run_prediction)
             pred_results_rv.set(result)
+            pred_results_err_rv.set(None)
+            last_sig_rv.set(sig)
+        except Exception as e:
+            err_msg = str(e)
+            if hasattr(e, "response"):
+                try:
+                    body = e.response.json()
+                    if "detail" in body:
+                        err_msg = str(body["detail"])
+                except Exception:
+                    pass
+            pred_results_err_rv.set(humanize_error(err_msg))
+            pred_results_rv.set(None)
             last_sig_rv.set(sig)
         finally:
             ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
@@ -1334,8 +1563,11 @@ def predicciones_server(input, output, session):
         if not res or res.get("pred_df") is None:
             return ui.div()
 
+        decimals = _pred_table_decimals()
+
         click = input.pred_plot_click() if "pred_plot_click" in input else None
         if click and click.get("scenario") is not None:
+            click_y = pd.to_numeric(click.get("y"), errors="coerce")
             detail_df = pd.DataFrame(
                 [
                     {
@@ -1356,7 +1588,7 @@ def predicciones_server(input, output, session):
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
             df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
-                lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                lambda v: fmt_num(v, decimals) if pd.notna(v) else v
             )
         return ui.tags.div(
             ui.tags.div(
@@ -1433,6 +1665,8 @@ def predicciones_server(input, output, session):
         m = max_preds_available()
         h = pred_horizon()
         res = pred_results_rv.get()
+        target = target_var_rv.get()
+        target_agg = _target_aggregation_label(target)
 
         # Header (inputs)
         header = ui.card(
@@ -1443,6 +1677,10 @@ def predicciones_server(input, output, session):
                 ui.tags.div(
                     "Elige el modelo y las exógenas. La predicción SOLO se ejecuta al pulsar el botón.",
                     style="color:#6b7280; margin-top:4px; text-align:center;",
+                ),
+                ui.tags.div(
+                    f"Objetivo: {target or '—'} · agregación automática: {target_agg}",
+                    style="color:#475569; margin-top:4px; text-align:center; font-size:0.95rem;",
                 ),
                 style="width:100%;",
             ),
@@ -1507,24 +1745,29 @@ def predicciones_server(input, output, session):
 
         # Estado: calculando (spinner se inyecta via insert_ui)
 
-        # Estado sin resultados
+        # Estado sin resultados ni errores
+        err = pred_results_err_rv.get()
+
         if res is None:
+            status_content = [
+                ui.tags.div(
+                    ui.tags.span("Estado: ", style="font-weight:600;"),
+                    ui.tags.span(
+                        "listo para calcular. Pulsa «Calcula predicción».",
+                        style="color:#6b7280;",
+                    ),
+                    style=(
+                        "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
+                        "border-radius: 12px; background:#fafafa;"
+                    ),
+                )
+            ]
+
             return ui.div(
                 PANEL_STYLES,
-                xgb_tooltip_style,
                 header,
                 ui.tags.div(
-                    ui.tags.div(
-                        ui.tags.span("Estado: ", style="font-weight:600;"),
-                        ui.tags.span(
-                            "listo para calcular. Pulsa «Calcula predicción».",
-                            style="color:#6b7280;",
-                        ),
-                        style=(
-                            "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
-                            "border-radius: 12px; background:#fafafa;"
-                        ),
-                    ),
+                    *status_content,
                     id="pred_result_area",
                 ),
                 footer,

@@ -17,17 +17,23 @@ from front.utils.back_api_wrappers import (
 from front.utils.utils import (
     ICON_SVG_INFO,
     PrediccionesCache,
+    _to_date,
     _safe_alias,
     build_name_to_table,
-    compatibilidad_con_objetivo,
     create_calendar_filter,
     detect_temporal_filters,
+    diff_en_temporalidad,
     fmt as _fmt,
     fmt_num,
     fmt_date_by_temporality as _fmt_date_temp,
+    format_catalog_aggregation,
     group_by_category,
+    humanize_error,
+    metadata_decimals,
+    normalize_temporality,
     panel_styles,
     process_date_range_filters,
+    shift_date_by_temporality,
     slug as _slug,
     stable_id,
 )
@@ -55,6 +61,7 @@ def escenarios_server(input, output, session):
     saved_fut_cell_values_rv = reactive.Value(
         {}
     )  # valores de celdas exógenas guardados
+    filters_step_err_rv = reactive.Value(None)
     fut_gen_rv = reactive.Value(
         0
     )  # generación de inputs de celdas (cambia al entrar al panel 4)
@@ -67,6 +74,80 @@ def escenarios_server(input, output, session):
     name_to_table = build_name_to_table(catalog_entries)
     cache = PrediccionesCache(name_to_table)
     PANEL_STYLES = panel_styles()
+
+    def _target_aggregation_label(target_name: str | None = None) -> str:
+        resolved_target = target_name or target_var_rv.get()
+        meta = cache.get_meta(resolved_target) if resolved_target else {}
+        return format_catalog_aggregation((meta or {}).get("operacion_obj"))
+
+    def _is_temporal_filter_col(col: str | None) -> bool:
+        return (col or "").lower().strip() in (
+            "anio",
+            "año",
+            "ano",
+            "mes",
+            "dia",
+            "día",
+        )
+
+    def _normalize_filter_values(values) -> list[str]:
+        if not values:
+            return []
+        if isinstance(values, (list, tuple)):
+            return [str(v) for v in values if str(v).strip()]
+        value = str(values).strip()
+        return [value] if value else []
+
+    def _get_filter_values(input_id: str) -> list[str]:
+        if input_id in input:
+            return _normalize_filter_values(input[input_id]())
+        return _normalize_filter_values(saved_filter_values_rv.get().get(input_id, []))
+
+    def _required_filter_specs() -> list[dict]:
+        specs: dict[str, dict] = {}
+        for item in vars_to_config():
+            pretty = item["pretty"]
+            table = item["table"]
+            filtros = cache.get_filters(table)
+            for f in filtros:
+                if _is_temporal_filter_col(f.get("col")):
+                    continue
+                filter_table = f["table"]
+                col = f["col"]
+                input_id = stable_id("flt", f"{filter_table}__{col}")
+                spec = specs.setdefault(
+                    input_id,
+                    {
+                        "input_id": input_id,
+                        "label": f.get("label") or col,
+                        "variables": [],
+                    },
+                )
+                if pretty not in spec["variables"]:
+                    spec["variables"].append(pretty)
+        return list(specs.values())
+
+    def _missing_required_filters_message() -> str | None:
+        missing: list[str] = []
+        for spec in _required_filter_specs():
+            if _get_filter_values(spec["input_id"]):
+                continue
+            vars_label = ", ".join(spec["variables"])
+            missing.append(f"{spec['label']} ({vars_label})")
+        if not missing:
+            return None
+        return (
+            "Debes seleccionar al menos un valor en todos los filtros visibles. "
+            f"Faltan: {'; '.join(missing)}."
+        )
+
+    def _snapshot_filter_values() -> dict[str, list[str]]:
+        saved: dict[str, list[str]] = {}
+        for spec in _required_filter_specs():
+            vals = _get_filter_values(spec["input_id"])
+            if vals:
+                saved[spec["input_id"]] = vals
+        return saved
 
     # Evita registrar múltiples handlers para IDs dinámicos
     _registered_pick_handlers: set[str] = set()
@@ -168,13 +249,20 @@ def escenarios_server(input, output, session):
             style="overflow:auto; max-height:420px;",
         )
 
+    def _scenario_table_decimals() -> int:
+        target = target_var_rv.get()
+        meta = cache.get_meta(target) if target else {}
+        return metadata_decimals(meta)
+
     def _signed_fmt(value, digits: int = 4, suffix: str = "") -> str:
         if value is None or pd.isna(value):
             return ""
         prefix = "+" if float(value) > 0 else ""
         return f"{prefix}{fmt_num(float(value), digits, suffix)}"
 
-    def _build_future_plot(df, pred, title, ylabel, xlabel, column_y, trace_name):
+    def _build_future_plot(
+        df, pred, title, ylabel, xlabel, column_y, trace_name, decimals
+    ):
         df_plot = ensure_datetime_index(df)
         pred_index = pd.to_datetime(pred.index, errors="coerce")
         pred_series = pd.Series(pred.values, index=pred_index, name=trace_name)
@@ -204,7 +292,7 @@ def escenarios_server(input, output, session):
                 mode="lines",
                 name="Real",
                 line={"color": "#2563eb", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -216,7 +304,7 @@ def escenarios_server(input, output, session):
                 line={"color": "#e11d48", "width": 3},
                 marker={"color": "#e11d48", "size": 9},
                 customdata=customdata,
-                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>{trace_name}: %{{y:,.4f}}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>{trace_name}: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
         fig.update_layout(
@@ -256,6 +344,7 @@ def escenarios_server(input, output, session):
         xlabel,
         column_y,
         window_end,
+        decimals,
         actual_values=None,
     ):
         df_plot = ensure_datetime_index(df)
@@ -285,9 +374,9 @@ def escenarios_server(input, output, session):
             return [
                 [
                     ts.strftime("%d-%m-%Y"),
-                    fmt_num(real, 4) if pd.notna(real) else "",
-                    fmt_num(pred_val, 4),
-                    _signed_fmt(diff_val, 4),
+                    fmt_num(real, decimals) if pd.notna(real) else "",
+                    fmt_num(pred_val, decimals),
+                    _signed_fmt(diff_val, decimals),
                     _signed_fmt(diff_pct_val, 2, "%"),
                     segment_name,
                 ]
@@ -313,7 +402,7 @@ def escenarios_server(input, output, session):
                 mode="lines",
                 name="Valor real",
                 line={"color": "#2563eb", "width": 2},
-                hovertemplate="Fecha: %{x|%d-%m-%Y}<br>Valor real: %{y:,.4f}<extra></extra>",
+                hovertemplate=f"Fecha: %{{x|%d-%m-%Y}}<br>Valor real: %{{y:,.{decimals}f}}<extra></extra>",
             )
         )
 
@@ -410,7 +499,7 @@ def escenarios_server(input, output, session):
     @reactive.Calc
     def target_temporalidad() -> str:
         meta = cache.get_meta(target_var_rv.get()) or {}
-        return str(meta.get("temporalidad", "")).lower()
+        return normalize_temporality(meta.get("temporalidad"))
 
     def is_monthly(temp: str) -> bool:
         t = (temp or "").lower()
@@ -618,6 +707,14 @@ def escenarios_server(input, output, session):
     # =====================================================================
     # Panel 1: Objetivo
     # =====================================================================
+    @reactive.Effect
+    def _init_target_var():
+        if target_var_rv.get() is None:
+            grouped = group_by_category(catalog_entries)
+            all_names = [n for names in grouped.values() for n in names]
+            if all_names:
+                target_var_rv.set(all_names[0])
+
     @output
     @render.ui
     def step_panel_1():
@@ -629,9 +726,6 @@ def escenarios_server(input, output, session):
 
         grouped = group_by_category(catalog_entries)
         all_names = [n for names in grouped.values() for n in names]
-
-        if target_var_rv.get() is None and all_names:
-            target_var_rv.set(all_names[0])
 
         selected = target_var_rv.get()
 
@@ -653,6 +747,7 @@ def escenarios_server(input, output, session):
                         base_info_rv.set(None)
 
                 meta = cache.get_meta(name)
+                operacion = _target_aggregation_label(name)
                 temporalidad = _fmt(meta.get("temporalidad"))
                 granularidad = _fmt(meta.get("granularidad"))
                 unidad_medida = _fmt(meta.get("unidad_medida"))
@@ -680,6 +775,11 @@ def escenarios_server(input, output, session):
                             ),
                             ui.tags.div(
                                 ui.tags.div(
+                                    ui.tags.div(
+                                        ui.tags.strong("Agregación automática: "),
+                                        operacion,
+                                        style="margin-bottom: 8px;",
+                                    ),
                                     ui.tags.div(
                                         ui.tags.strong("Temporalidad: "),
                                         temporalidad,
@@ -744,6 +844,11 @@ def escenarios_server(input, output, session):
                 ui.tags.span(selected or "—"),
                 class_="selection-pill",
             ),
+            ui.tags.div(
+                ui.tags.strong("Agregación automática del objetivo: "),
+                _target_aggregation_label(selected),
+                style="color:#475569; margin-bottom:12px;",
+            ),
             ui.accordion(*panels, id="esc_acc_target", open=True, multiple=True),
             ui.div(
                 ui.input_action_button("esc_prev_1", "← Anterior"),
@@ -774,6 +879,70 @@ def escenarios_server(input, output, session):
                 pairs.append((stable_id("esc_pred", name), name))
         return pairs
 
+    def _is_predictor_selectable(
+        predictor_name: str,
+        predictor_meta: dict,
+        target_name: str,
+        target_meta: dict,
+        target_start,
+        target_end,
+    ) -> tuple[bool, str]:
+        if not target_name:
+            return False, "Sin objetivo seleccionado"
+
+        pred_temp = normalize_temporality(predictor_meta.get("temporalidad"))
+        tgt_temp = normalize_temporality(target_meta.get("temporalidad"))
+        pred_start, pred_end = cache.get_date_range(predictor_name)
+
+        if not pred_temp or not tgt_temp:
+            return False, "Temporalidad no definida"
+        if pred_temp != tgt_temp:
+            return False, "Temporalidad distinta"
+        if (
+            pred_start is None
+            or pred_end is None
+            or target_start is None
+            or target_end is None
+        ):
+            return False, "Sin rango de fechas"
+        if _to_date(pred_end) < _to_date(target_start):
+            return False, "El predictor termina antes de que empiece el objetivo"
+        if _to_date(pred_start) > _to_date(target_end):
+            return False, "El predictor empieza después de que termine el objetivo"
+        return True, ""
+
+    def _checked_predictors(
+        target_name: str | None = None,
+        target_meta: dict | None = None,
+        target_start=None,
+        target_end=None,
+    ) -> list[str]:
+        selected = []
+        for var_id, name in predictor_pairs():
+            if not (var_id in input and input[var_id]()):
+                continue
+
+            if (
+                target_name
+                and target_meta
+                and target_start is not None
+                and target_end is not None
+            ):
+                p_meta = cache.get_meta(name) or {}
+                selectable, _ = _is_predictor_selectable(
+                    predictor_name=name,
+                    predictor_meta=p_meta,
+                    target_name=target_name,
+                    target_meta=target_meta,
+                    target_start=target_start,
+                    target_end=target_end,
+                )
+                if not selectable:
+                    continue
+
+            selected.append(name)
+        return sorted(set(selected))
+
     @reactive.Calc
     def selected_predictors():
         target = target_var_rv.get()
@@ -781,25 +950,14 @@ def escenarios_server(input, output, session):
             return []
 
         target_meta = cache.get_meta(target) or {}
-        target_start, target_end = cache.get_date_range(target)
+        target_start, target_end = effective_target_range()
 
-        selected = []
-        for var_id, name in predictor_pairs():
-            if not (var_id in input and input[var_id]()):
-                continue
-
-            ok, _ = compatibilidad_con_objetivo(
-                predictor_name=name,
-                predictor_meta=cache.get_meta(name),
-                target_name=target,
-                target_meta=target_meta,
-                target_start=target_start,
-                target_end=target_end,
-                cache=cache,
-            )
-            if ok:
-                selected.append(name)
-        return sorted(set(selected))
+        return _checked_predictors(
+            target_name=target,
+            target_meta=target_meta,
+            target_start=target_start,
+            target_end=target_end,
+        )
 
     @reactive.Effect
     def _sync_predictors_rv():
@@ -818,9 +976,7 @@ def escenarios_server(input, output, session):
         grouped = group_by_category(catalog_entries, exclude_name=target)
 
         target_meta = cache.get_meta(target) if target else {}
-        ts, te = cache.get_date_range(target) if target else (None, None)
-
-        selected_set = set(selected_predictors())
+        ts, te = effective_target_range() if target else (None, None)
         target_temp = _fmt(target_meta.get("temporalidad"))
 
         panels = []
@@ -830,14 +986,13 @@ def escenarios_server(input, output, session):
                 var_id = stable_id("esc_pred", name)
                 meta = cache.get_meta(name)
 
-                ok, reason = compatibilidad_con_objetivo(
+                ok, reason = _is_predictor_selectable(
                     predictor_name=name,
                     predictor_meta=meta,
                     target_name=target,
                     target_meta=target_meta,
                     target_start=ts,
                     target_end=te,
-                    cache=cache,
                 )
 
                 badge = ui.tags.span(
@@ -860,9 +1015,10 @@ def escenarios_server(input, output, session):
                 unidad_medida = _fmt(meta.get("unidad_medida"))
                 fuente = _fmt(meta.get("fuente"))
                 descripcion = _fmt(meta.get("descripcion"))
+                current_checked = bool(input[var_id]()) if var_id in input else False
 
                 selector = (
-                    ui.input_checkbox(var_id, name, value=(name in selected_set))
+                    ui.input_checkbox(var_id, name, value=current_checked)
                     if ok
                     else ui.tags.span(name, style="font-weight:600; color:#6e7781;")
                 )
@@ -965,6 +1121,51 @@ def escenarios_server(input, output, session):
         return cache.get_date_range(target)
 
     @reactive.Calc
+    def effective_target_range() -> tuple:
+        target_var = target_var_rv.get()
+        if not target_var:
+            return (None, None)
+
+        target_start, target_end = target_selected_range()
+        if target_start is None or target_end is None:
+            target_start, target_end = cache.get_date_range(target_var)
+
+        target_meta = cache.get_meta(target_var) or {}
+        tgt_temp = target_meta.get("temporalidad")
+        preds = _checked_predictors(
+            target_name=target_var,
+            target_meta=target_meta,
+            target_start=target_start,
+            target_end=target_end,
+        )
+
+        if not preds or target_start is None or target_end is None or tgt_temp is None:
+            return (target_start, target_end)
+
+        min_pred_end = None
+        for predictor in preds:
+            _p_start, p_end = cache.get_date_range(predictor)
+            if p_end is None:
+                return (target_start, target_end)
+            if min_pred_end is None or _to_date(p_end) < _to_date(min_pred_end):
+                min_pred_end = p_end
+
+        if min_pred_end is None:
+            return (target_start, target_end)
+
+        n = diff_en_temporalidad(target_end, min_pred_end, tgt_temp)
+        if n is None or n > 0:
+            return (target_start, target_end)
+
+        adjusted_end = shift_date_by_temporality(min_pred_end, tgt_temp, -2)
+        if pd.isna(adjusted_end):
+            return (target_start, target_end)
+        if _to_date(adjusted_end) < _to_date(target_start):
+            return (target_start, target_end)
+
+        return (target_start, adjusted_end.date().isoformat())
+
+    @reactive.Calc
     def vars_to_config() -> list[dict]:
         """
         Devuelve una lista de dicts con:
@@ -1019,7 +1220,7 @@ def escenarios_server(input, output, session):
             temp = detect_temporal_filters(filtros)
 
             if is_target and (temp["mes"] or temp["dia"]):
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     date_range = (start_def, end_def)
                     temporal_filters = process_date_range_filters(
@@ -1030,7 +1231,7 @@ def escenarios_server(input, output, session):
                     target_temporal_filters = temporal_filters
 
             elif is_target and temp["anio"]:
-                start_def, end_def = target_selected_range()
+                start_def, end_def = effective_target_range()
                 if start_def and end_def:
                     start_year = pd.to_datetime(start_def, errors="coerce").year
                     end_year = pd.to_datetime(end_def, errors="coerce").year
@@ -1074,8 +1275,7 @@ def escenarios_server(input, output, session):
                         )
 
             for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                if _is_temporal_filter_col(f["col"]):
                     continue
 
                 input_id = stable_id("flt", f"{f['table']}__{f['col']}")
@@ -1116,7 +1316,7 @@ def escenarios_server(input, output, session):
             )
 
         target_var = target_var_rv.get()
-        target_start, target_end = target_selected_range()
+        target_start, target_end = effective_target_range()
         target_meta = cache.get_meta(target_var) if target_var else {}
         target_temporality = target_meta.get("temporalidad")
 
@@ -1138,8 +1338,7 @@ def escenarios_server(input, output, session):
                 controls = []
 
                 for f in filtros:
-                    col_lower = f["col"].lower().strip()
-                    if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
+                    if _is_temporal_filter_col(f["col"]):
                         continue
 
                     t = f["table"]
@@ -1173,7 +1372,7 @@ def escenarios_server(input, output, session):
                                 selected=_saved_val if _saved_val else [],
                                 multiple=True,
                                 options={
-                                    "placeholder": "Selecciona uno o varios valores (vacío = sin filtro)",
+                                    "placeholder": "Selecciona uno o varios valores (obligatorio)",
                                     "plugins": ["remove_button"],
                                 },
                             ),
@@ -1284,12 +1483,27 @@ def escenarios_server(input, output, session):
                     "elegido en la variable objetivo.",
                     style="text-align:center; color:#475569; max-width:600px; margin:0 auto 1.5rem; line-height:1.6;",
                 ),
+                ui.tags.p(
+                    "Todos los filtros visibles son obligatorios.",
+                    style="text-align:center; color:#991b1b; font-weight:600; margin:0 auto 1rem;",
+                ),
                 style="text-align:center; margin-bottom:1rem;",
             ),
             ui.tags.div(
                 target_box,
                 predictors_box,
                 style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;",
+            ),
+            (
+                ui.tags.div(
+                    filters_step_err_rv.get(),
+                    style=(
+                        "margin-bottom:12px; padding:12px 14px; border:1px solid #fecaca; "
+                        "border-radius:12px; background:#fef2f2; color:#991b1b;"
+                    ),
+                )
+                if filters_step_err_rv.get()
+                else ui.div()
             ),
             ui.div(
                 ui.input_action_button("btn_prev_3", "← Anterior"),
@@ -1301,29 +1515,18 @@ def escenarios_server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_prev_3)
     def _go_step_2():
+        filters_step_err_rv.set(None)
         current_step.set(2)
 
     @reactive.Effect
     @reactive.event(input.btn_next_3)
     def _go_step_4():
-        saved = {}
-        for item in vars_to_config():
-            t = item["table"]
-            filtros = cache.get_filters(t)
-            for f in filtros:
-                col_lower = f["col"].lower().strip()
-                if col_lower in ("anio", "año", "ano", "mes", "dia", "día"):
-                    continue
-                input_id = stable_id("flt", f"{t}__{f['col']}")
-                if input_id in input:
-                    vals = input[input_id]()
-                    if vals:
-                        saved[input_id] = (
-                            list(vals)
-                            if isinstance(vals, (list, tuple))
-                            else [str(vals)]
-                        )
-        saved_filter_values_rv.set(saved)
+        err = _missing_required_filters_message()
+        if err:
+            filters_step_err_rv.set(err)
+            return
+        saved_filter_values_rv.set(_snapshot_filter_values())
+        filters_step_err_rv.set(None)
 
         saved_horizon_rv.set(2)
         saved_fut_cell_values_rv.set({})
@@ -1331,6 +1534,11 @@ def escenarios_server(input, output, session):
         scenario_res_rv.set(None)
         scenario_err_rv.set(None)
         current_step.set(4)
+
+    @reactive.Effect
+    def _clear_filters_step_error_when_complete():
+        if filters_step_err_rv.get() and _missing_required_filters_message() is None:
+            filters_step_err_rv.set(None)
 
     # =====================================================================
     # Panel 4: Escenarios FUTUROS (exógenas inventadas por el usuario)
@@ -1355,7 +1563,7 @@ def escenarios_server(input, output, session):
         if not target:
             return pd.DatetimeIndex([])
 
-        _s, end = target_selected_range()
+        _s, end = effective_target_range()
         if end is None:
             _s, end = cache.get_date_range(target)
         if end is None:
@@ -1521,27 +1729,23 @@ def escenarios_server(input, output, session):
             pass
 
     @reactive.Effect
+    @reactive.event(input.esc_fut_active_exogs)
     def _save_cells_before_exog_toggle():
         if current_step.get() != 4:
             return
-
-        if "esc_fut_active_exogs" not in input:
-            return
-        _ = input.esc_fut_active_exogs()
 
         with reactive.isolate():
             exogs = list(fut_exogs())
             h = int(fut_horizon())
             gen = fut_gen_rv.get()
             saved = dict(saved_fut_cell_values_rv.get())
-        for ex in exogs:
-            for k in range(1, h + 1):
-                cid = _cell_id(ex, k, gen)
-                if cid in input:
-                    v = input[cid]()
-                    if v is not None:
+            for ex in exogs:
+                for k in range(1, h + 1):
+                    cid = _cell_id(ex, k, gen)
+                    if cid in input:
+                        v = input[cid]()
                         saved[cid] = v
-        saved_fut_cell_values_rv.set(saved)
+            saved_fut_cell_values_rv.set(saved)
 
     # ------------------------
     # UI: tabla editable (2)
@@ -1626,16 +1830,16 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
+            ui.tags.th(
+                "Fecha",
+                style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;",
+            )
         ]
-        for k in range(1, h + 1):
+        for ex in exogs:
             header_cells.append(
                 ui.tags.th(
-                    ui.tags.div(f"P{k}", style="font-weight:700;"),
-                    ui.tags.div(
-                        _dt_label(idx[k - 1], temp),
-                        style="font-size:12px; color:#6b7280; margin-top:2px;",
-                    ),
+                    ex,
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
                 )
             )
 
@@ -1643,14 +1847,14 @@ def escenarios_server(input, output, session):
         _gen = fut_gen_rv.get()
 
         body_rows = []
-        for ex in exogs:
+        for k in range(1, h + 1):
             cells = [
                 ui.tags.td(
-                    ui.tags.span(ex),
-                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap;",
+                    _dt_label(idx[k - 1], temp),
+                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap; z-index:1; border-bottom:1px solid #e5e7eb; padding:8px 12px;",
                 )
             ]
-            for k in range(1, h + 1):
+            for ex in exogs:
                 cid = _cell_id(ex, k, _gen)
                 _init_val = _cell_saved.get(cid, None)
                 cells.append(
@@ -1664,6 +1868,12 @@ def escenarios_server(input, output, session):
             body_rows.append(ui.tags.tr(*cells))
 
         return ui.tags.div(
+            ui.tags.style(
+                """
+                .esc-fut-table td .form-group { margin-bottom: 0 !important; }
+                .esc-fut-table td .shiny-input-container { margin-bottom: 0 !important; }
+                """
+            ),
             ui.tags.div(
                 "3) Valores futuros de exógenas activas",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:4px; color:#1e293b;",
@@ -1676,7 +1886,8 @@ def escenarios_server(input, output, session):
                 ui.tags.table(
                     ui.tags.thead(ui.tags.tr(*header_cells)),
                     ui.tags.tbody(*body_rows),
-                    style="border-collapse:collapse; width:max-content;",
+                    class_="esc-fut-table",
+                    style="border-collapse:collapse; min-width:100%; background:#fff;",
                 ),
                 style="overflow:auto; max-width:100%; border:1px solid #d0d7de; border-radius:10px; padding:8px;",
             ),
@@ -1697,17 +1908,16 @@ def escenarios_server(input, output, session):
         if int(input.esc_fut_calc() or 0) == 0:
             return
 
-        _exogs_snap = fut_exogs()
-        _h_snap = fut_horizon()
         with reactive.isolate():
+            _exogs_snap = fut_exogs()
+            _h_snap = fut_horizon()
             _gen_snap = fut_gen_rv.get()
-        _saved_snap = dict(saved_fut_cell_values_rv.get())
-        for _ex in _exogs_snap:
-            for _k in range(1, _h_snap + 1):
-                _cid = _cell_id(_ex, _k, _gen_snap)
-                if _cid in input:
-                    _v = input[_cid]()
-                    if _v is not None:
+            _saved_snap = dict(saved_fut_cell_values_rv.get())
+            for _ex in _exogs_snap:
+                for _k in range(1, _h_snap + 1):
+                    _cid = _cell_id(_ex, _k, _gen_snap)
+                    if _cid in input:
+                        _v = input[_cid]()
                         _saved_snap[_cid] = _v
         saved_fut_cell_values_rv.set(_saved_snap)
 
@@ -1720,6 +1930,13 @@ def escenarios_server(input, output, session):
         model = fut_model()
         filters = selected_filters_by_var()
         sig = fut_signature()
+        decimals = _scenario_table_decimals()
+
+        filter_err = _missing_required_filters_message()
+        if filter_err:
+            scenario_err_rv.set(filter_err)
+            last_sig_rv.set(sig)
+            return
 
         if not target:
             scenario_err_rv.set("No hay variable objetivo seleccionada.")
@@ -1812,6 +2029,7 @@ def escenarios_server(input, output, session):
                     xlabel="Fecha",
                     column_y=y_col,
                     trace_name="Escenario",
+                    decimals=decimals,
                 )
                 pred_df = _build_pred_df(future, pred_vals, date_fmt="%d-%m-%Y")
                 return {"model": model, "fig": fig, "pred_df": pred_df}
@@ -1827,7 +2045,15 @@ def escenarios_server(input, output, session):
             last_sig_rv.set(sig)
 
         except Exception as e:
-            scenario_err_rv.set(f"Fallo al calcular: {type(e).__name__}: {e}")
+            err_msg = f"{type(e).__name__}: {e}"
+            if hasattr(e, "response"):
+                try:
+                    body = e.response.json()
+                    if "detail" in body:
+                        err_msg = str(body["detail"])
+                except Exception:
+                    pass
+            scenario_err_rv.set(f"Fallo al calcular: {humanize_error(err_msg)}")
             last_sig_rv.set(sig)
             return
         finally:
@@ -1858,13 +2084,19 @@ def escenarios_server(input, output, session):
         if not res or res.get("mode") == "past" or res.get("pred_df") is None:
             return ui.div()
 
+        decimals = _scenario_table_decimals()
+
         click = input.esc_fut_plot_click() if "esc_fut_plot_click" in input else None
         if click and click.get("scenario") is not None:
+            click_y = pd.to_numeric(click.get("y"), errors="coerce")
             detail_df = pd.DataFrame(
                 [
                     {
                         "Fecha": click.get("date_label") or "",
-                        "Escenario": click.get("scenario") or "",
+                        "Escenario": (
+                            click.get("scenario")
+                            or (fmt_num(click_y, decimals) if pd.notna(click_y) else "")
+                        ),
                     }
                 ]
             )
@@ -1879,7 +2111,7 @@ def escenarios_server(input, output, session):
         df = res["pred_df"].copy()
         if "Predicción" in df.columns:
             df["Predicción"] = pd.to_numeric(df["Predicción"], errors="coerce").apply(
-                lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                lambda v: fmt_num(v, decimals) if pd.notna(v) else v
             )
         return ui.tags.div(
             ui.tags.div(
@@ -2286,22 +2518,19 @@ def escenarios_server(input, output, session):
             exogs = list(past_exogs())
             dates = past_window_dates()
             saved = dict(saved_past_cell_values_rv.get())
-        for ex in exogs:
-            for k in range(1, len(dates) + 1):
-                cid = _past_cell_id(ex, k)
-                if cid in input:
-                    v = input[cid]()
-                    if v is not None:
+            for ex in exogs:
+                for k in range(1, len(dates) + 1):
+                    cid = _past_cell_id(ex, k)
+                    if cid in input:
+                        v = input[cid]()
                         saved[cid] = v
-        saved_past_cell_values_rv.set(saved)
+            saved_past_cell_values_rv.set(saved)
 
     @reactive.Effect
+    @reactive.event(input.esc_past_active_exogs)
     def _save_past_cells_before_exog_toggle():
         if current_step.get() != 4 or scenario_type_rv.get() != "pasado":
             return
-        if "esc_past_active_exogs" not in input:
-            return
-        _ = input.esc_past_active_exogs()
         _save_past_cells()
 
     # --- Exog selector (past) ---
@@ -2399,34 +2628,32 @@ def escenarios_server(input, output, session):
             )
 
         header_cells = [
-            ui.tags.th("Exógena", style="position:sticky; left:0; background:#fff;")
+            ui.tags.th(
+                "Fecha",
+                style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; padding:8px 12px;",
+            )
         ]
-        for k in range(1, h + 1):
+        for ex in exogs:
             header_cells.append(
                 ui.tags.th(
-                    ui.tags.div(f"P{k}", style="font-weight:700;"),
-                    ui.tags.div(
-                        _dt_label(dates[k - 1], temp),
-                        style="font-size:12px; color:#6b7280; margin-top:2px;",
-                    ),
+                    ex,
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
                 )
             )
 
         _cell_saved = saved_past_cell_values_rv.get()
+        decimals = _scenario_table_decimals()
 
         body_rows = []
-        for ex in exogs:
+        for k in range(1, h + 1):
             cells = [
                 ui.tags.td(
-                    ui.tags.span(ex),
-                    style=(
-                        "position:sticky; left:0; background:#fff; "
-                        "font-weight:600; white-space:nowrap;"
-                    ),
+                    _dt_label(dates[k - 1], temp),
+                    style="position:sticky; left:0; background:#fff; font-weight:600; white-space:nowrap; z-index:1; border-bottom:1px solid #e5e7eb; padding:8px 12px;",
                 )
             ]
 
-            for k in range(1, h + 1):
+            for ex in exogs:
                 cid = _past_cell_id(ex, k)
                 _init_val = _cell_saved.get(cid, None)
 
@@ -2441,17 +2668,14 @@ def escenarios_server(input, output, session):
                                 + (" has-value" if _init_val is not None else "")
                             },
                             ui.input_numeric(
-                                cid,
-                                label="",
-                                value=_init_val,
-                                step=0.01,
+                                cid, label="", value=_init_val, step=0.01, width="100%"
                             ),
                             ui.tags.span(
-                                "" if prev_val is None else fmt_num(prev_val, 4),
+                                "" if prev_val is None else fmt_num(prev_val, decimals),
                                 class_="esc-past-num-ghost",
                             ),
                         ),
-                        style="min-width:140px;",
+                        style="text-align:center; border-bottom:1px solid #e5e7eb; padding:4px 8px;",
                     )
                 )
 
@@ -2462,7 +2686,8 @@ def escenarios_server(input, output, session):
                 """
                 .esc-past-num-wrap {
                     position: relative;
-                    min-width: 140px;
+                    min-width: 100px;
+                    margin: 0 auto;
                 }
 
                 .esc-past-num-wrap .form-group,
@@ -2479,11 +2704,13 @@ def escenarios_server(input, output, session):
                     position: relative;
                     z-index: 2;
                     background: transparent !important;
+                    text-align: right;
                 }
 
                 .esc-past-num-ghost {
                     position: absolute;
-                    left: 12px;
+                    left: auto;
+                    right: 28px;
                     top: 50%;
                     transform: translateY(-50%);
                     color: #94a3b8;
@@ -2543,7 +2770,7 @@ def escenarios_server(input, output, session):
                 ui.tags.table(
                     ui.tags.thead(ui.tags.tr(*header_cells)),
                     ui.tags.tbody(*body_rows),
-                    style="border-collapse:collapse; width:max-content;",
+                    style="border-collapse:collapse; min-width:100%; background:#fff;",
                 ),
                 style=(
                     "overflow:auto; max-width:100%; border:1px solid #d0d7de; "
@@ -2575,9 +2802,15 @@ def escenarios_server(input, output, session):
         target = target_var_rv.get()
         exogs = past_active_exogs()
         model = past_model()
+        decimals = _scenario_table_decimals()
         filters = selected_filters_by_var()
         ws, we = past_window_range()
         dates = past_window_dates()
+
+        filter_err = _missing_required_filters_message()
+        if filter_err:
+            past_scenario_err_rv.set(filter_err)
+            return
 
         if not target:
             past_scenario_err_rv.set("No hay variable objetivo seleccionada.")
@@ -2699,6 +2932,7 @@ def escenarios_server(input, output, session):
                     xlabel="Fecha",
                     column_y=y_col,
                     window_end=we_dt,
+                    decimals=decimals,
                     actual_values=y_true,
                 )
 
@@ -2741,9 +2975,9 @@ def escenarios_server(input, output, session):
                 detail = exc.response.json().get("detail", exc.response.text)
             except Exception:
                 detail = exc.response.text
-            past_scenario_err_rv.set(f"Error backend: {detail}")
+            past_scenario_err_rv.set(f"Fallo al calcular: {humanize_error(detail)}")
         except Exception as e:
-            past_scenario_err_rv.set(f"Error: {type(e).__name__}: {e}")
+            past_scenario_err_rv.set(f"Fallo al calcular: {humanize_error(str(e))}")
         finally:
             ui.remove_ui(selector=f"#{_spinner_id}", immediate=True)
 
@@ -2770,14 +3004,20 @@ def escenarios_server(input, output, session):
         if not res or res.get("mode") != "past" or res.get("pred_df") is None:
             return ui.div()
 
+        decimals = _scenario_table_decimals()
+
         click = input.esc_past_plot_click() if "esc_past_plot_click" in input else None
         if click and click.get("scenario") is not None:
+            click_y = pd.to_numeric(click.get("y"), errors="coerce")
             detail_df = pd.DataFrame(
                 [
                     {
                         "Fecha": click.get("date_label") or "",
                         "Valor real": click.get("real") or "",
-                        "Escenario": click.get("scenario") or "",
+                        "Escenario": (
+                            click.get("scenario")
+                            or (fmt_num(click_y, decimals) if pd.notna(click_y) else "")
+                        ),
                         "Diferencia": click.get("diff") or "",
                         "% Diferencia": click.get("diff_pct") or "",
                     }
@@ -2797,11 +3037,11 @@ def escenarios_server(input, output, session):
         for col in ["Escenario", "Valor real"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").apply(
-                    lambda v: fmt_num(v, 4) if pd.notna(v) else v
+                    lambda v: fmt_num(v, decimals) if pd.notna(v) else v
                 )
         if "Diferencia" in df.columns:
             df["Diferencia"] = pd.to_numeric(df["Diferencia"], errors="coerce").apply(
-                lambda v: _signed_fmt(v, 4) if pd.notna(v) else v
+                lambda v: _signed_fmt(v, decimals) if pd.notna(v) else v
             )
         if "% Diferencia" in df.columns:
             df["% Diferencia"] = pd.to_numeric(
@@ -2825,7 +3065,9 @@ def escenarios_server(input, output, session):
             return ui.div()
 
         target = target_var_rv.get()
-        target_start_raw, target_end_raw = cache.get_date_range(target or "")
+        target_start_raw, target_end_raw = effective_target_range()
+        if target_start_raw is None or target_end_raw is None:
+            target_start_raw, target_end_raw = cache.get_date_range(target or "")
         temp = target_temporalidad()
 
         min_dt = (
@@ -2845,6 +3087,7 @@ def escenarios_server(input, output, session):
         else:
             default_start = (max_dt - pd.Timedelta(days=30)).date()
         default_start = max(min_date, default_start)
+        target_agg = _target_aggregation_label(target)
 
         # --- 1) Date range selector (using create_calendar_filter) ---
         table = _past_target_table()

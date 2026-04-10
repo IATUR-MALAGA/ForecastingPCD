@@ -2,7 +2,9 @@ from psycopg import sql
 
 from back.config import settings
 
-CATALOG_SCHEMA = settings.get("db.catalog.schema", settings.get("db.default_schema", "IA"))
+CATALOG_SCHEMA = settings.get(
+    "db.catalog.schema", settings.get("db.default_schema", "IA")
+)
 VARIABLES_TABLE = settings.get("db.catalog.variables_table", "tbl_catalogo_variables")
 FILTERS_TABLE = settings.get("db.catalog.filters_table", "tbl_admin_filtro")
 
@@ -71,16 +73,20 @@ GET_COLUMNS_IN_TABLE = """
     ORDER BY ordinal_position;
 """
 
+GET_COLUMN_EXISTS_IN_TABLE = """
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = %s
+      AND table_name = %s
+      AND column_name = %s
+    LIMIT 1;
+"""
+
 GET_CATALOG_NAMES = sql.SQL("""
     SELECT nombre_tabla, nombre, categoria
     FROM {}.{}
     ORDER BY categoria, nombre;
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)
-
-GET_ALL_DATA_IN_TABLE = """
-    SELECT *
-    FROM "{schema}"."{table}";
-"""
 
 GET_CATEGORIES = sql.SQL("""
     SELECT DISTINCT categoria
@@ -90,7 +96,7 @@ GET_CATEGORIES = sql.SQL("""
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)
 
 GET_METADATA_FOR_VARIABLE = sql.SQL("""
-    SELECT temporalidad, descripcion, fuente, granularidad, unidad_medida, nombre_colum_ref, nombre_tabla, nombre
+    SELECT temporalidad, descripcion, fuente, granularidad, unidad_medida, nombre_colum_ref, nombre_tabla, nombre, operacion_obj, decimales
     FROM {}.{}
     WHERE nombre = %s;
 """).format(CATALOG_SCHEMA_IDENT, VARIABLES_TABLE_IDENT)

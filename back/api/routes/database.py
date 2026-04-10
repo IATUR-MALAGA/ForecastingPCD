@@ -30,7 +30,9 @@ def list_tables(schema: str):
     return get_all_tables_in_schema(schema)
 
 
-@router.get("/schemas/{schema}/tables/{table}/columns", response_model=list[dict[str, Any]])
+@router.get(
+    "/schemas/{schema}/tables/{table}/columns", response_model=list[dict[str, Any]]
+)
 def list_columns(schema: str, table: str):
     schema = ensure_pg_identifier(schema, "schema")
     table = ensure_pg_identifier(table, "table")
@@ -52,7 +54,10 @@ def distinct_values(
     schema: str,
     table: str,
     column: str,
-    complete: bool = Query(False, description="Si True, solo devuelve valores con cobertura temporal completa (sin huecos)."),
+    complete: bool = Query(
+        False,
+        description="Si True, solo devuelve valores con cobertura temporal completa (sin huecos).",
+    ),
 ):
     schema = ensure_pg_identifier(schema, "schema")
     table = ensure_pg_identifier(table, "table")
@@ -89,4 +94,5 @@ def variable_date_range(
 
 @router.get("/bool-group/{filtro}", response_model=list[dict[str, Any]])
 def bool_group_filters(filtro: str):
+    filtro = ensure_pg_identifier(filtro, "filtro")
     return get_bool_group_filters(filtro)
