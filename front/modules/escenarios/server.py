@@ -95,7 +95,9 @@ def escenarios_server(input, output, session):
             )
         return pd.to_datetime(df.index, errors="coerce")
 
-    def _build_table_html(df: pd.DataFrame, signed_cols: tuple[str, ...] = ()) -> ui.Tag:
+    def _build_table_html(
+        df: pd.DataFrame, signed_cols: tuple[str, ...] = ()
+    ) -> ui.Tag:
         def _parse_signed_value(val):
             if val is None or pd.isna(val):
                 return None
@@ -109,7 +111,7 @@ def escenarios_server(input, output, session):
                 s.replace("%", "")
                 .replace("\xa0", "")
                 .replace(" ", "")
-                .replace("−", "-")   # minus unicode
+                .replace("−", "-")  # minus unicode
             )
 
             # Normalizar separadores decimales/miles
@@ -147,7 +149,11 @@ def escenarios_server(input, output, session):
                 if col in signed_cols:
                     num = _parse_signed_value(val)
                     if num is not None:
-                        color = "#dc2626" if num < 0 else "#16a34a" if num > 0 else "#475569"
+                        color = (
+                            "#dc2626"
+                            if num < 0
+                            else "#16a34a" if num > 0 else "#475569"
+                        )
                         style += f" color:{color}; font-weight:600;"
 
                 cells.append(ui.tags.td("" if pd.isna(val) else str(val), style=style))
@@ -174,10 +180,19 @@ def escenarios_server(input, output, session):
         pred_series = pd.Series(pred.values, index=pred_index, name=trace_name)
         pred_series = pred_series[~pd.isna(pred_series.index)]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
         customdata = [
-            [ts.strftime("%d-%m-%Y"), None, fmt_num(val, 4), None, None, trace_name.lower()]
+            [
+                ts.strftime("%d-%m-%Y"),
+                None,
+                fmt_num(val, 4),
+                None,
+                None,
+                trace_name.lower(),
+            ]
             for ts, val in zip(pred_series.index, pred_series.values)
         ]
 
@@ -264,7 +279,9 @@ def escenarios_server(input, output, session):
 
         def _customdata(segment_series, actual, segment_name):
             diff = segment_series - actual
-            diff_pct = ((segment_series - actual) / actual.replace(0, float("nan"))) * 100
+            diff_pct = (
+                (segment_series - actual) / actual.replace(0, float("nan"))
+            ) * 100
             return [
                 [
                     ts.strftime("%d-%m-%Y"),
@@ -283,7 +300,9 @@ def escenarios_server(input, output, session):
                 )
             ]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
 
         fig = go.Figure()
@@ -309,7 +328,9 @@ def escenarios_server(input, output, session):
                     name="Escenario modificado",
                     line={"color": "#f97316", "width": 3},
                     marker={"color": "#f97316", "size": 9},
-                    customdata=_customdata(modified_series, modified_actual, "modificado"),
+                    customdata=_customdata(
+                        modified_series, modified_actual, "modificado"
+                    ),
                     hovertemplate=(
                         "Fecha: %{x|%d-%m-%Y}<br>"
                         "Escenario: %{customdata[2]}<br>"
@@ -645,7 +666,9 @@ def escenarios_server(input, output, session):
                                 btn_id,
                                 name,
                                 class_=(
-                                    "var-pick is-selected" if selected == name else "var-pick"
+                                    "var-pick is-selected"
+                                    if selected == name
+                                    else "var-pick"
                                 ),
                             ),
                             style="display: flex; align-items: baseline; gap: 6px;",
@@ -701,7 +724,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variable objetivo",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -895,7 +920,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variables predictoras",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1059,9 +1086,11 @@ def escenarios_server(input, output, session):
                             {
                                 "table": f["table"],
                                 "col": f["col"],
-                                "values": list(vals)
-                                if isinstance(vals, (list, tuple))
-                                else [str(vals)],
+                                "values": (
+                                    list(vals)
+                                    if isinstance(vals, (list, tuple))
+                                    else [str(vals)]
+                                ),
                             }
                         )
 
@@ -1169,7 +1198,9 @@ def escenarios_server(input, output, session):
         target_box_content = (
             ui.div(
                 ui.tags.div(
-                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    ui.tags.span(
+                        target_item["pretty"], style="font-weight:700; font-size:1rem;"
+                    ),
                     style="margin-bottom:8px;",
                 ),
                 _var_body(target_item),
@@ -1213,7 +1244,9 @@ def escenarios_server(input, output, session):
                     ),
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
                 ),
-                ui.accordion(*pred_panels, id="esc_acc_filters_preds", open=True, multiple=True),
+                ui.accordion(
+                    *pred_panels, id="esc_acc_filters_preds", open=True, multiple=True
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -1225,7 +1258,10 @@ def escenarios_server(input, output, session):
                     "📊 Variables predictoras",
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
                 ),
-                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                ui.p(
+                    "No se han seleccionado variables predictoras.",
+                    style="color:#6b7280;",
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -1235,7 +1271,9 @@ def escenarios_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Configurar filtros",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1519,10 +1557,13 @@ def escenarios_server(input, output, session):
             return ui.div()
 
         return ui.tags.div(
-            ui.tags.b("2) Exógenas activas"),
-            ui.tags.span(
+            ui.tags.div(
+                "2) Exógenas activas",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+            ),
+            ui.tags.p(
                 "Selecciona las exógenas que quieres incluir en el escenario futuro.",
-                style="font-size:12px; color:#6b7280; margin-bottom:8px; display:block;",
+                style="color:#475569; margin:0 0 10px 0; line-height:1.5;",
             ),
             ui.input_checkbox_group(
                 "esc_fut_active_exogs",
@@ -1533,11 +1574,11 @@ def escenarios_server(input, output, session):
             ),
             ui.tags.span(
                 "Desmarca una exógena para excluirla del cálculo y ocultar sus valores futuros.",
-                style="font-size:12px; color:#6b7280;",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-top:8px;",
             ),
             style=(
-                "margin-top:10px; padding:10px 12px; border:1px solid #e5e7eb; "
-                "border-radius:12px; background:#fff;"
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
             ),
         )
 
@@ -1554,18 +1595,34 @@ def escenarios_server(input, output, session):
 
         if not exogs:
             return ui.tags.div(
-                ui.tags.b("No hay exógenas activas."),
-                ui.tags.span(
-                    " Marca al menos una exógena en el selector para continuar."
+                ui.tags.div(
+                    "3) Valores futuros de exógenas activas",
+                    style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
-                style="color:#6b7280;",
+                ui.tags.span(
+                    "No hay exógenas activas. Marca al menos una exógena en el selector para continuar.",
+                    style="color:#6b7280;",
+                ),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; margin-bottom:12px;"
+                ),
             )
 
         if idx.empty:
             return ui.tags.div(
-                ui.tags.b("No se pudo inferir el calendario futuro."),
-                ui.tags.span(" Revisa el rango de fechas del objetivo."),
-                style="color:#6b7280;",
+                ui.tags.div(
+                    "3) Valores futuros de exógenas activas",
+                    style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+                ),
+                ui.tags.span(
+                    "No se pudo inferir el calendario futuro. Revisa el rango de fechas del objetivo.",
+                    style="color:#6b7280;",
+                ),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; margin-bottom:12px;"
+                ),
             )
 
         header_cells = [
@@ -1600,7 +1657,7 @@ def escenarios_server(input, output, session):
                     ui.tags.td(
                         ui.input_numeric(
                             cid, label="", value=_init_val, step=0.01
-                        ),  # ✅ sin ns()
+                        ),  # sin ns()
                         style="min-width:120px;",
                     )
                 )
@@ -1608,9 +1665,12 @@ def escenarios_server(input, output, session):
 
         return ui.tags.div(
             ui.tags.div(
-                ui.tags.b("3) Valores futuros de exógenas activas"),
-                ui.tags.span(" (rellena todas las celdas)"),
-                style="margin-bottom:8px;",
+                "3) Valores futuros de exógenas activas",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:4px; color:#1e293b;",
+            ),
+            ui.tags.span(
+                "Rellena todas las celdas para poder calcular el escenario.",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
             ),
             ui.tags.div(
                 ui.tags.table(
@@ -1618,7 +1678,11 @@ def escenarios_server(input, output, session):
                     ui.tags.tbody(*body_rows),
                     style="border-collapse:collapse; width:max-content;",
                 ),
-                style="overflow:auto; max-width:100%; border:1px solid #e5e7eb; border-radius:12px; padding:8px;",
+                style="overflow:auto; max-width:100%; border:1px solid #d0d7de; border-radius:10px; padding:8px;",
+            ),
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
             ),
         )
 
@@ -1646,12 +1710,10 @@ def escenarios_server(input, output, session):
                     if _v is not None:
                         _saved_snap[_cid] = _v
         saved_fut_cell_values_rv.set(_saved_snap)
-        # ─────────────────────────────────────────────────────────────────────
 
         scenario_err_rv.set(None)
         scenario_res_rv.set(None)
 
-        # Leer valores reactivos en el hilo principal
         target = target_var_rv.get()
         exogs = fut_active_exogs()
         h = fut_horizon()
@@ -1676,7 +1738,6 @@ def escenarios_server(input, output, session):
             return
 
         mat = fut_matrix_values()
-
         for ex in exogs:
             for k, v in enumerate(mat.get(ex, []), start=1):
                 if v is None:
@@ -1718,7 +1779,6 @@ def escenarios_server(input, output, session):
                 {"use_target_lags": True, "max_lag": 12, "recursive_forecast": True}
             )
 
-        # Insertar spinner (bypass flush, se envía inmediatamente al browser)
         _spinner_id = _SPINNER_ID
         ui.insert_ui(
             ui.tags.div(
@@ -1739,7 +1799,7 @@ def escenarios_server(input, output, session):
                 parsed = _parse_forecast_response(resp, fallback_index=idx)
                 if parsed is None:
                     return None
-                df, y_col, future, h2, pred_vals, pred_series = parsed
+                df, y_col, future, _, pred_vals, pred_series = parsed
                 fig = _build_future_plot(
                     df=df,
                     pred=pred_series,
@@ -1844,45 +1904,93 @@ def escenarios_server(input, output, session):
         with reactive.isolate():
             _init_horizon = saved_horizon_rv.get()
 
-        header = ui.card(
-            ui.h3("Panel 4: Escenarios futuros", style="margin:0; text-align:center;"),
-            ui.tags.div(
-                "1) Periodos · 2) Valores exógenas · 3) Modelo · 4) Calcular",
-                style="color:#6b7280; margin-top:4px; text-align:center;",
+        intro = ui.div(
+            ui.tags.div("\U0001f52e", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+            ui.h3(
+                "Configurar escenarios futuros",
+                style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
             ),
-            ui.tags.hr(style="margin:12px 0;"),
-            ui.tags.div(
-                ui.input_numeric(
-                    "esc_fut_horizon",
-                    "1) Periodos a predecir",
-                    value=_init_horizon,
-                    min=1,
-                    max=60,
-                    step=1,
-                ),
-                style="max-width:320px; margin:0 auto;",
+            ui.tags.p(
+                "Define el horizonte, ajusta exógenas y ejecuta el modelo para simular escenarios futuros.",
+                style="text-align:center; color:#475569; max-width:700px; margin:0 auto 1.5rem; line-height:1.6;",
             ),
-            style="padding:14px; border-radius:14px;",
+            style="text-align:center; margin-bottom:1rem;",
         )
 
-        model_box = ui.card(
+        horizon_box = ui.tags.div(
             ui.tags.div(
-                ui.input_radio_buttons(
-                    "esc_fut_model",
-                    "3) Modelo",
-                    choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
-                    selected=fut_model(),
-                    inline=True,
-                ),
-                style="display:flex; justify-content:center;",
+                "1) Periodos a predecir",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            ui.input_numeric(
+                "esc_fut_horizon",
+                "Cantidad de periodos",
+                value=_init_horizon,
+                min=1,
+                max=60,
+                step=1,
+            ),
+            ui.tags.span(
+                "Máximo 60 periodos por simulación.",
+                style="display:block; margin-top:6px; font-size:0.85rem; color:#64748b;",
+            ),
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
+            ),
+        )
+
+        xgb_info = ui.tooltip(
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO),
+                style="margin-left:6px; cursor:pointer;",
+            ),
+            ui.HTML(
+                "Según la documentación oficial de XGBoost, cada árbol asigna cada observación a una hoja y le da el valor asociado a esa hoja; "
+                "la predicción final es la suma de los valores aportados por todos los árboles.<br><br>"
+                "Como el modelo construye la predicción mediante particiones del espacio de entrada y valores por hoja, su comportamiento es "
+                "esencialmente por regiones, no una prolongación continua de una tendencia.<br><br>"
+                "Por ello, XGBoost suele funcionar mejor interpolando patrones similares a los observados en entrenamiento que extrapolando a "
+                "situaciones muy alejadas, por ejemplo cuando se esperan valores claramente superiores al rango habitual visto durante el ajuste.<br><br>"
+                "Fuente: <a href='https://xgboost.readthedocs.io/en/stable/tutorials/model.html' target='_blank' rel='noopener noreferrer'>"
+                "https://xgboost.readthedocs.io/en/stable/tutorials/model.html</a>"
+            ),
+            options={
+                "customClass": "xgb-wide-tooltip",
+                "html": True,
+                "sanitize": False,
+                "trigger": "click",
+            },
+        )
+
+        model_label = ui.tags.div(
+            ui.tags.span("4) Modelo"),
+            xgb_info,
+            style="display:inline-flex; align-items:center; gap:4px;",
+        )
+
+        model_box = ui.tags.div(
+            ui.tags.div(
+                model_label,
+                style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            ui.input_radio_buttons(
+                "esc_fut_model",
+                "",
+                choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
+                selected=fut_model(),
+                inline=True,
             ),
             ui.tags.div(
                 ui.input_action_button(
                     "esc_fut_calc", "Calcular", class_="btn-primary"
                 ),
-                style="margin-top:10px; display:flex; justify-content:center;",
+                style="margin-top:10px;",
             ),
-            style="padding:14px; border-radius:14px; margin-top:12px;",
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
+            ),
         )
 
         status = ui.div()
@@ -1910,38 +2018,62 @@ def escenarios_server(input, output, session):
         outputs = ui.div()
         if res is not None:
             outputs = ui.tags.div(
-                ui.card(
+                ui.tags.div(
                     ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
                     ui.output_ui("esc_fut_plot"),
-                    style="padding:12px; border-radius:14px; flex:2 1 640px; min-width:520px;",
+                    style=(
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:2 1 640px; min-width:520px;"
+                    ),
                 ),
-                ui.card(
+                ui.tags.div(
                     ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
                     ui.tags.div(
                         ui.output_ui("esc_fut_table"),
                         style="max-height:420px; overflow:auto;",
                     ),
-                    style="padding:12px; border-radius:14px; flex:1 1 420px; min-width:340px;",
+                    style=(
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:1 1 420px; min-width:340px;"
+                    ),
                 ),
                 style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; margin-top:12px;",
             )
 
         footer = ui.tags.div(
             ui.input_action_button("esc_prev_4", "← Anterior"),
-            style="margin-top:12px;",
+            style="margin-top:12px; display:flex; gap:8px;",
         )
 
         return ui.div(
             PANEL_STYLES,
-            header,
+            ui.tags.style(
+                """
+                .xgb-wide-tooltip {
+                    pointer-events: auto !important;
+                }
+
+                .xgb-wide-tooltip .tooltip-inner {
+                    max-width: 620px !important;
+                    width: 620px;
+                    white-space: normal !important;
+                    text-align: left;
+                    line-height: 1.45;
+                }
+
+                .xgb-wide-tooltip .tooltip-inner a {
+                    color: #93c5fd;
+                    text-decoration: underline;
+                    pointer-events: auto;
+                }
+                """
+            ),
+            intro,
+            horizon_box,
             ui.output_ui("esc_future_exog_selector"),
             ui.output_ui("esc_future_exog_table"),
             model_box,
-            ui.tags.div(
-                status,
-                outputs,
-                id="esc_result_area",
-            ),
+            ui.tags.div(status, outputs, id="esc_result_area"),
             footer,
         )
 
@@ -1957,10 +2089,11 @@ def escenarios_server(input, output, session):
     # =====================================================================
 
     past_scenario_err_rv = reactive.Value(None)
-    saved_past_cell_values_rv = reactive.Value({})  # valores de celdas exógenas guardados (pasado)
+    saved_past_cell_values_rv = reactive.Value(
+        {}
+    )  # valores de celdas exógenas guardados (pasado)
 
     base_info_rv = reactive.Value({})  # lookup de valores históricos por (exog, fecha)
-
 
     def _build_past_base_lookup(
         df: pd.DataFrame, exogs: list[str], temp: str
@@ -1986,7 +2119,6 @@ def escenarios_server(input, output, session):
                     lookup[(ex, dt_str(dt, temp, kind="key"))] = float(val)
 
         return lookup
-
 
     @reactive.Effect
     async def _load_past_base_values():
@@ -2043,6 +2175,7 @@ def escenarios_server(input, output, session):
         runner = MODEL_RUNNERS.get(model) or sarimax_run
 
         try:
+
             def _load_base():
                 resp = runner(payload)
                 df_resp = pd.DataFrame(resp.get("df") or [])
@@ -2182,10 +2315,13 @@ def escenarios_server(input, output, session):
         if not exogs:
             return ui.div()
         return ui.tags.div(
-            ui.tags.b("2) Exógenas activas"),
-            ui.tags.span(
-                "Selecciona las exógenas que quieres incluir en el escenario futuro.",
-                style="font-size:12px; color:#6b7280; margin-bottom:8px; display:block;",
+            ui.tags.div(
+                "2) Exógenas activas",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+            ),
+            ui.tags.p(
+                "Selecciona las exógenas que quieres incluir en el escenario pasado.",
+                style="color:#475569; margin:0 0 10px 0; line-height:1.5;",
             ),
             ui.input_checkbox_group(
                 "esc_past_active_exogs",
@@ -2196,11 +2332,11 @@ def escenarios_server(input, output, session):
             ),
             ui.tags.span(
                 "Desmarca una exógena para excluirla del escenario.",
-                style="font-size:12px; color:#6b7280;",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-top:8px;",
             ),
             style=(
-                "margin-top:10px; padding:10px 12px; border:1px solid #e5e7eb; "
-                "border-radius:12px; background:#fff;"
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
             ),
         )
 
@@ -2219,27 +2355,47 @@ def escenarios_server(input, output, session):
 
         if not exogs:
             return ui.tags.div(
-                ui.tags.b("No hay exógenas activas."),
-                ui.tags.span(
-                    " Marca al menos una exógena en el selector para poder editar valores."
+                ui.tags.div(
+                    "3) Valores modificados de exógenas",
+                    style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
-                style="color:#6b7280; margin-top:8px;",
+                ui.tags.span(
+                    "No hay exógenas activas. Marca al menos una exógena en el selector para poder editar valores."
+                ),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; color:#6b7280; margin-bottom:12px;"
+                ),
             )
 
         if dates.empty:
             return ui.tags.div(
-                ui.tags.b("Selecciona un rango de fechas válido para ver la tabla."),
-                style="color:#6b7280; margin-top:8px;",
+                ui.tags.div(
+                    "3) Valores modificados de exógenas",
+                    style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+                ),
+                ui.tags.span("Selecciona un rango de fechas válido para ver la tabla."),
+                style=(
+                    "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                    "background:#ffffff; color:#6b7280; margin-bottom:12px;"
+                ),
             )
 
         h = len(dates)
         if h > 60:
             return ui.tags.div(
+                ui.tags.div(
+                    "3) Valores modificados de exógenas",
+                    style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+                ),
                 ui.tags.b(f"Rango demasiado amplio ({h} periodos)."),
                 ui.tags.span(
                     " Reduce el rango a un máximo de 60 periodos para editar valores."
                 ),
-                style="color:#991b1b; margin-top:8px;",
+                style=(
+                    "padding:16px; border:1px solid #fecaca; border-radius:12px; "
+                    "background:#fef2f2; color:#991b1b; margin-bottom:12px;"
+                ),
             )
 
         header_cells = [
@@ -2281,9 +2437,8 @@ def escenarios_server(input, output, session):
                     ui.tags.td(
                         ui.tags.div(
                             {
-                                "class": "esc-past-num-wrap" + (
-                                    " has-value" if _init_val is not None else ""
-                                )
+                                "class": "esc-past-num-wrap"
+                                + (" has-value" if _init_val is not None else "")
                             },
                             ui.input_numeric(
                                 cid,
@@ -2377,12 +2532,12 @@ def escenarios_server(input, output, session):
                 """
             ),
             ui.tags.div(
-                ui.tags.b("3) Valores modificados de exógenas"),
-                ui.tags.span(
-                    " (el valor histórico aparece en gris dentro del input; "
-                    "si escribes un nuevo valor, sustituye al histórico)"
-                ),
-                style="margin-bottom:8px;",
+                "3) Valores modificados de exógenas",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:4px; color:#1e293b;",
+            ),
+            ui.tags.span(
+                "El valor histórico aparece en gris dentro del input; si escribes un nuevo valor, sustituye al histórico.",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
             ),
             ui.tags.div(
                 ui.tags.table(
@@ -2391,9 +2546,13 @@ def escenarios_server(input, output, session):
                     style="border-collapse:collapse; width:max-content;",
                 ),
                 style=(
-                    "overflow:auto; max-width:100%; border:1px solid #e5e7eb; "
-                    "border-radius:12px; padding:8px;"
+                    "overflow:auto; max-width:100%; border:1px solid #d0d7de; "
+                    "border-radius:10px; padding:8px;"
                 ),
+            ),
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
             ),
         )
 
@@ -2558,7 +2717,9 @@ def escenarios_server(input, output, session):
                     real = pd.to_numeric(pred_df["Valor real"], errors="coerce")
                     pred = pd.to_numeric(pred_df["Escenario"], errors="coerce")
                     pred_df["Diferencia"] = pred - real
-                    pred_df["% Diferencia"] = ((pred - real) / real.replace(0, float("nan"))) * 100
+                    pred_df["% Diferencia"] = (
+                        (pred - real) / real.replace(0, float("nan"))
+                    ) * 100
 
                 return {
                     "model": model,
@@ -2627,7 +2788,9 @@ def escenarios_server(input, output, session):
                     "Punto seleccionado",
                     style="font-weight:600; margin-bottom:8px;",
                 ),
-                _build_table_html(detail_df, signed_cols=("Diferencia", "% Diferencia")),
+                _build_table_html(
+                    detail_df, signed_cols=("Diferencia", "% Diferencia")
+                ),
             )
 
         df = res["pred_df"].copy()
@@ -2641,9 +2804,9 @@ def escenarios_server(input, output, session):
                 lambda v: _signed_fmt(v, 4) if pd.notna(v) else v
             )
         if "% Diferencia" in df.columns:
-            df["% Diferencia"] = pd.to_numeric(df["% Diferencia"], errors="coerce").apply(
-                lambda v: _signed_fmt(v, 2, "%") if pd.notna(v) else v
-            )
+            df["% Diferencia"] = pd.to_numeric(
+                df["% Diferencia"], errors="coerce"
+            ).apply(lambda v: _signed_fmt(v, 2, "%") if pd.notna(v) else v)
 
         return ui.tags.div(
             ui.tags.div(
@@ -2706,22 +2869,28 @@ def escenarios_server(input, output, session):
                 style="padding:8px;",
             )
 
-        date_range_card = ui.card(
+        intro = ui.div(
+            ui.tags.div("\U0001f4c9", style="font-size:2.5rem; margin-bottom:0.5rem;"),
             ui.h3(
-                "Panel 4: Escenarios pasados",
-                style="margin:0; text-align:center;",
+                "Configurar escenarios pasados",
+                style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+            ),
+            ui.tags.p(
+                "Modifica valores históricos de exógenas y analiza cómo habría cambiado la predicción.",
+                style="text-align:center; color:#475569; max-width:700px; margin:0 auto 1.5rem; line-height:1.6;",
+            ),
+            style="text-align:center; margin-bottom:1rem;",
+        )
+
+        date_range_box = ui.tags.div(
+            ui.tags.div(
+                "1) Rango de fechas a predecir",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
             ),
             ui.tags.div(
-                "Modifica valores históricos de las exógenas y observa "
-                "cómo habría cambiado la predicción.",
-                style="color:#6b7280; margin-top:4px; text-align:center;",
-            ),
-            ui.tags.hr(style="margin:12px 0;"),
-            ui.tags.div(
-                ui.tags.b("1) Rango de fechas a predecir"),
                 ui.tags.span(
-                    " (selecciona la ventana temporal del escenario)",
-                    style="font-size:0.85rem; color:#6b7280;",
+                    "Selecciona la ventana temporal del escenario.",
+                    style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
                 ),
                 calendar_widget,
                 ui.tags.small(
@@ -2732,22 +2901,54 @@ def escenarios_server(input, output, session):
                         "margin-top:4px; font-style:italic;"
                     ),
                 ),
-                style="max-width:480px; margin:0 auto;",
             ),
-            style="padding:14px; border-radius:14px;",
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
+            ),
         )
 
         # --- 4) Model + compute ---
-        model_box = ui.card(
+        xgb_info_past = ui.tooltip(
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO),
+                style="margin-left:6px; cursor:pointer;",
+            ),
+            ui.HTML(
+                "Según la documentación oficial de XGBoost, cada árbol asigna cada observación a una hoja y le da el valor asociado a esa hoja; "
+                "la predicción final es la suma de los valores aportados por todos los árboles.<br><br>"
+                "Como el modelo construye la predicción mediante particiones del espacio de entrada y valores por hoja, su comportamiento es "
+                "esencialmente por regiones, no una prolongación continua de una tendencia.<br><br>"
+                "Por ello, XGBoost suele funcionar mejor interpolando patrones similares a los observados en entrenamiento que extrapolando a "
+                "situaciones muy alejadas, por ejemplo cuando se esperan valores claramente superiores al rango habitual visto durante el ajuste.<br><br>"
+                "Fuente: <a href='https://xgboost.readthedocs.io/en/stable/tutorials/model.html' target='_blank' rel='noopener noreferrer'>"
+                "https://xgboost.readthedocs.io/en/stable/tutorials/model.html</a>"
+            ),
+            options={
+                "customClass": "xgb-wide-tooltip",
+                "html": True,
+                "sanitize": False,
+                "trigger": "click",
+            },
+        )
+
+        model_label_past = ui.tags.div(
+            ui.tags.span("4) Modelo"),
+            xgb_info_past,
+            style="display:inline-flex; align-items:center; gap:4px;",
+        )
+
+        model_box = ui.tags.div(
             ui.tags.div(
-                ui.input_radio_buttons(
-                    "esc_past_model",
-                    "4) Modelo",
-                    choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
-                    selected=past_model(),
-                    inline=True,
-                ),
-                style="display:flex; justify-content:center;",
+                model_label_past,
+                style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            ui.input_radio_buttons(
+                "esc_past_model",
+                "",
+                choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
+                selected=past_model(),
+                inline=True,
             ),
             ui.tags.div(
                 ui.input_action_button(
@@ -2755,19 +2956,44 @@ def escenarios_server(input, output, session):
                     "Calcular escenario",
                     class_="btn-primary",
                 ),
-                style="margin-top:10px; display:flex; justify-content:center;",
+                style="margin-top:10px;",
             ),
-            style="padding:14px; border-radius:14px; margin-top:12px;",
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
+            ),
         )
 
         footer = ui.tags.div(
             ui.input_action_button("esc_prev_pasado", "← Anterior"),
-            style="margin-top:12px;",
+            style="margin-top:12px; display:flex; gap:8px;",
         )
 
         return ui.div(
             PANEL_STYLES,
-            date_range_card,
+            ui.tags.style(
+                """
+                .xgb-wide-tooltip {
+                    pointer-events: auto !important;
+                }
+
+                .xgb-wide-tooltip .tooltip-inner {
+                    max-width: 620px !important;
+                    width: 620px;
+                    white-space: normal !important;
+                    text-align: left;
+                    line-height: 1.45;
+                }
+
+                .xgb-wide-tooltip .tooltip-inner a {
+                    color: #93c5fd;
+                    text-decoration: underline;
+                    pointer-events: auto;
+                }
+                """
+            ),
+            intro,
+            date_range_box,
             ui.output_ui("esc_past_exog_selector"),
             ui.output_ui("esc_past_exog_table"),
             model_box,
@@ -2812,23 +3038,23 @@ def escenarios_server(input, output, session):
         outputs = ui.div()
         if res is not None and res.get("mode") == "past":
             outputs = ui.tags.div(
-                ui.card(
+                ui.tags.div(
                     ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
                     ui.output_ui("esc_past_plot"),
                     style=(
-                        "padding:12px; border-radius:14px; "
-                        "flex:2 1 640px; min-width:520px;"
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:2 1 640px; min-width:520px;"
                     ),
                 ),
-                ui.card(
+                ui.tags.div(
                     ui.h5("Predicción vs valor real", style="margin:0 0 8px 0;"),
                     ui.tags.div(
                         ui.output_ui("esc_past_table"),
                         style="max-height:420px; overflow:auto;",
                     ),
                     style=(
-                        "padding:12px; border-radius:14px; "
-                        "flex:1 1 420px; min-width:340px;"
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:1 1 420px; min-width:340px;"
                     ),
                 ),
                 style=(

@@ -1164,6 +1164,187 @@ input[type="checkbox"] {
   margin: 0 0 12px;
 }
 
+.btn-help-docs,
+.btn-help-docs.btn,
+.btn-help-docs.btn.btn-default,
+.btn-help-docs.btn.btn-primary {
+  background: linear-gradient(135deg, #9bc31a 0%, #a2b956 100%);
+  color: white;
+  border: 1px solid #0f172a;
+  border-radius: 9px;
+  padding: 0.65rem 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+  transition: all 0.2s ease;
+}
+
+.btn-help-docs:hover,
+.btn-help-docs.btn:hover,
+.btn-help-docs.btn.btn-default:hover,
+.btn-help-docs.btn.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+  background: linear-gradient(135deg, #111827 0%, #334155 100%);
+  color: white;
+}
+
+.help-floating-btn-wrap {
+  position: fixed;
+  top: 22px;
+  right: 26px;
+  z-index: 1200;
+}
+
+.help-floating-btn {
+  padding: 0.62rem 1rem;
+  font-size: 0.92rem;
+}
+
+.help-docs-container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px 0 26px;
+}
+
+.help-docs-page-frame {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.1);
+  padding: 20px 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+.help-docs-page-frame::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  background: linear-gradient(90deg, #0f172a 0%, #1d4ed8 100%);
+}
+
+.help-docs-card {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0.7rem 0.6rem 0.45rem;
+}
+
+.help-docs-title {
+  margin-top: 0;
+  margin-bottom: 0.55rem;
+  color: #0f172a;
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.help-docs-intro {
+  margin: 0 0 1.15rem 0;
+  color: #334155;
+  line-height: 1.75;
+  border-left: 4px solid #0f172a;
+  padding-left: 12px;
+}
+
+.help-docs-sections-box {
+  padding: 16px 16px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.help-docs-sections-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 12px 0;
+  color: #0f172a;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.help-docs-accordion .accordion-item {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.help-docs-accordion .accordion-header {
+  margin: 0;
+}
+
+.help-docs-accordion .accordion-button {
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+  border-left: 4px solid #94a3b8;
+}
+
+.help-docs-accordion .accordion-button:not(.collapsed) {
+  background: #eef2ff;
+  color: #1e3a8a;
+  border-left-color: #1d4ed8;
+}
+
+.help-docs-accordion .accordion-body {
+  color: #334155;
+  line-height: 1.6;
+  background: #ffffff;
+}
+
+.help-docs-accordion .accordion-body p {
+  margin-bottom: 0.7rem;
+}
+
+.help-docs-accordion .accordion-body ol,
+.help-docs-accordion .accordion-body ul {
+  margin: 0.35rem 0 0.85rem 1.2rem;
+}
+
+.help-docs-section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-hover);
+  margin-bottom: 0.8rem;
+  padding: 0.75rem 0.95rem;
+}
+
+.help-docs-section summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.help-docs-section p {
+  margin: 0.65rem 0 0 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+@media (max-width: 768px) {
+  .help-floating-btn-wrap {
+    top: 12px;
+    right: 12px;
+  }
+
+  .help-floating-btn {
+    padding: 0.5rem 0.72rem;
+    font-size: 0.84rem;
+  }
+
+  .help-docs-page-frame {
+    padding: 12px;
+  }
+}
+
 /* ===== END HOME MODULE SELECTOR ===== */
 
 /* ===== SCENARIO TYPE SELECTOR (Panel 0) ===== */

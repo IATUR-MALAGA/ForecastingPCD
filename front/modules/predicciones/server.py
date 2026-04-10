@@ -133,7 +133,9 @@ def predicciones_server(input, output, session):
                                 btn_id,
                                 name,
                                 class_=(
-                                    "var-pick is-selected" if name == selected else "var-pick"
+                                    "var-pick is-selected"
+                                    if name == selected
+                                    else "var-pick"
                                 ),
                             ),
                             style="display: flex; align-items: baseline; gap: 6px;",
@@ -189,7 +191,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f3af", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variable objetivo",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -352,7 +356,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f4ca", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Seleccionar variables predictoras",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -633,9 +639,11 @@ def predicciones_server(input, output, session):
                             {
                                 "table": f["table"],
                                 "col": f["col"],
-                                "values": list(vals)
-                                if isinstance(vals, (list, tuple))
-                                else [str(vals)],
+                                "values": (
+                                    list(vals)
+                                    if isinstance(vals, (list, tuple))
+                                    else [str(vals)]
+                                ),
                             }
                         )
 
@@ -740,7 +748,9 @@ def predicciones_server(input, output, session):
         target_box_content = (
             ui.div(
                 ui.tags.div(
-                    ui.tags.span(target_item["pretty"], style="font-weight:700; font-size:1rem;"),
+                    ui.tags.span(
+                        target_item["pretty"], style="font-weight:700; font-size:1rem;"
+                    ),
                     style="margin-bottom:8px;",
                 ),
                 _var_body(target_item),
@@ -784,7 +794,9 @@ def predicciones_server(input, output, session):
                     ),
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b; display:flex; align-items:center; gap:4px;",
                 ),
-                ui.accordion(*pred_panels, id="acc_filters_preds", open=True, multiple=True),
+                ui.accordion(
+                    *pred_panels, id="acc_filters_preds", open=True, multiple=True
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -796,7 +808,10 @@ def predicciones_server(input, output, session):
                     "📊 Variables predictoras",
                     style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#1e293b;",
                 ),
-                ui.p("No se han seleccionado variables predictoras.", style="color:#6b7280;"),
+                ui.p(
+                    "No se han seleccionado variables predictoras.",
+                    style="color:#6b7280;",
+                ),
                 style=(
                     "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
                     "background:#ffffff; flex:1 1 0; min-width:0; align-self:flex-start;"
@@ -806,7 +821,9 @@ def predicciones_server(input, output, session):
         return ui.div(
             PANEL_STYLES,
             ui.div(
-                ui.tags.div("\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+                ui.tags.div(
+                    "\U0001f527", style="font-size:2.5rem; margin-bottom:0.5rem;"
+                ),
                 ui.h3(
                     "Configurar filtros",
                     style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -1075,7 +1092,9 @@ def predicciones_server(input, output, session):
         pred_series = pd.Series(pred.values, index=pred_index, name="Predicción")
         pred_series = pred_series[~pd.isna(pred_series.index)]
 
-        all_index = pd.DatetimeIndex(df_plot.index.tolist() + pred_series.index.tolist())
+        all_index = pd.DatetimeIndex(
+            df_plot.index.tolist() + pred_series.index.tolist()
+        )
         x_min, x_max = compute_time_axis_bounds(all_index)
 
         customdata = [
@@ -1321,7 +1340,8 @@ def predicciones_server(input, output, session):
                 [
                     {
                         "Fecha": click.get("date_label") or "",
-                        "Predicción": click.get("scenario") or fmt_num(click.get("y"), 4),
+                        "Predicción": click.get("scenario")
+                        or fmt_num(click.get("y"), 4),
                     }
                 ]
             )
@@ -1359,6 +1379,57 @@ def predicciones_server(input, output, session):
         selected = exog_selected()
         model = selected_model()
 
+        xgb_info = ui.tooltip(
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO),
+                style="margin-left:6px; cursor:pointer;",
+            ),
+            ui.HTML(
+                "Según la documentación oficial de XGBoost, cada árbol asigna cada observación a una hoja y le da el valor asociado a esa hoja; "
+                "la predicción final es la suma de los valores aportados por todos los árboles.<br><br>"
+                "Como el modelo construye la predicción mediante particiones del espacio de entrada y valores por hoja, su comportamiento es "
+                "esencialmente por regiones, no una prolongación continua de una tendencia.<br><br>"
+                "Por ello, XGBoost suele funcionar mejor interpolando patrones similares a los observados en entrenamiento que extrapolando a "
+                "situaciones muy alejadas, por ejemplo cuando se esperan valores claramente superiores al rango habitual visto durante el ajuste.<br><br>"
+                "Fuente: <a href='https://xgboost.readthedocs.io/en/stable/tutorials/model.html' target='_blank' rel='noopener noreferrer'>"
+                "https://xgboost.readthedocs.io/en/stable/tutorials/model.html</a>"
+            ),
+            options={
+                "customClass": "xgb-wide-tooltip",
+                "html": True,
+                "sanitize": False,
+                "trigger": "click",
+            },
+        )
+
+        model_label = ui.tags.div(
+            ui.tags.span("Modelo"),
+            xgb_info,
+            style="display:inline-flex; align-items:center; gap:4px;",
+        )
+
+        xgb_tooltip_style = ui.tags.style(
+            """
+            .xgb-wide-tooltip {
+                pointer-events: auto !important;
+            }
+
+            .xgb-wide-tooltip .tooltip-inner {
+                max-width: 620px !important;
+                width: 620px;
+                white-space: normal !important;
+                text-align: left;
+                line-height: 1.45;
+            }
+
+            .xgb-wide-tooltip .tooltip-inner a {
+                color: #93c5fd;
+                text-decoration: underline;
+                pointer-events: auto;
+            }
+            """
+        )
+
         m = max_preds_available()
         h = pred_horizon()
         res = pred_results_rv.get()
@@ -1380,7 +1451,7 @@ def predicciones_server(input, output, session):
                 ui.tags.div(
                     ui.input_radio_buttons(
                         "model_choice",
-                        "Modelo",
+                        model_label,
                         choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
                         selected=model,
                         inline=True,
@@ -1440,6 +1511,7 @@ def predicciones_server(input, output, session):
         if res is None:
             return ui.div(
                 PANEL_STYLES,
+                xgb_tooltip_style,
                 header,
                 ui.tags.div(
                     ui.tags.div(
@@ -1516,6 +1588,7 @@ def predicciones_server(input, output, session):
 
         return ui.div(
             PANEL_STYLES,
+            xgb_tooltip_style,
             header,
             ui.tags.div(
                 exogs_line,
