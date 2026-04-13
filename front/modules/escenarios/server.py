@@ -1762,11 +1762,11 @@ def escenarios_server(input, output, session):
 
         return ui.tags.div(
             ui.tags.div(
-                "2) Exógenas activas",
+                "Exógenas activas",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
             ),
             ui.tags.p(
-                "Selecciona las exógenas que quieres incluir en el escenario futuro.",
+                "Selecciona las exógenas que quieres incluir en el escenario futuro. Solo las exógenas activas aparecerán en la tabla de valores futuros y se incluirán en el cálculo del escenario.",
                 style="color:#475569; margin:0 0 10px 0; line-height:1.5;",
             ),
             ui.input_checkbox_group(
@@ -1776,13 +1776,9 @@ def escenarios_server(input, output, session):
                 selected=exogs,
                 inline=False,
             ),
-            ui.tags.span(
-                "Desmarca una exógena para excluirla del cálculo y ocultar sus valores futuros.",
-                style="display:block; font-size:0.85rem; color:#64748b; margin-top:8px;",
-            ),
             style=(
                 "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
-                "background:#ffffff; margin-bottom:12px;"
+                "background:#ffffff; margin-bottom:0; flex:1 1 420px; min-width:320px;"
             ),
         )
 
@@ -1800,7 +1796,7 @@ def escenarios_server(input, output, session):
         if not exogs:
             return ui.tags.div(
                 ui.tags.div(
-                    "3) Valores futuros de exógenas activas",
+                    "Valores futuros de exógenas activas",
                     style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
                 ui.tags.span(
@@ -1816,7 +1812,7 @@ def escenarios_server(input, output, session):
         if idx.empty:
             return ui.tags.div(
                 ui.tags.div(
-                    "3) Valores futuros de exógenas activas",
+                    "Valores futuros de exógenas activas",
                     style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
                 ui.tags.span(
@@ -1839,7 +1835,7 @@ def escenarios_server(input, output, session):
             header_cells.append(
                 ui.tags.th(
                     ex,
-                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:left; padding:8px 12px; min-width:110px;",
                 )
             )
 
@@ -1862,10 +1858,17 @@ def escenarios_server(input, output, session):
                         ui.input_numeric(
                             cid, label="", value=_init_val, step=0.01
                         ),  # sin ns()
-                        style="min-width:120px;",
+                        style="min-width:120px; padding:8px 12px; border-bottom:1px solid #e5e7eb;",
                     )
                 )
             body_rows.append(ui.tags.tr(*cells))
+
+        table_container_style = (
+            "overflow:auto; max-width:100%; border:1px solid #d0d7de; "
+            "border-radius:10px; padding:8px;"
+        )
+        if h > 5:
+            table_container_style += " max-height:340px;"
 
         return ui.tags.div(
             ui.tags.style(
@@ -1875,7 +1878,7 @@ def escenarios_server(input, output, session):
                 """
             ),
             ui.tags.div(
-                "3) Valores futuros de exógenas activas",
+                "Valores futuros de exógenas activas",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:4px; color:#1e293b;",
             ),
             ui.tags.span(
@@ -1889,7 +1892,7 @@ def escenarios_server(input, output, session):
                     class_="esc-fut-table",
                     style="border-collapse:collapse; min-width:100%; background:#fff;",
                 ),
-                style="overflow:auto; max-width:100%; border:1px solid #d0d7de; border-radius:10px; padding:8px;",
+                style=table_container_style,
             ),
             style=(
                 "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
@@ -2137,7 +2140,7 @@ def escenarios_server(input, output, session):
             _init_horizon = saved_horizon_rv.get()
 
         intro = ui.div(
-            ui.tags.div("\U0001f52e", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+            ui.tags.div("\U0001f916", style="font-size:2.5rem; margin-bottom:0.5rem;"),
             ui.h3(
                 "Configurar escenarios futuros",
                 style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
@@ -2149,9 +2152,23 @@ def escenarios_server(input, output, session):
             style="text-align:center; margin-bottom:1rem;",
         )
 
+        horizon_info = ui.tooltip(
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO),
+                style="margin-left:6px; cursor:pointer;",
+            ),
+            "Máximo 60 periodos por simulación.",
+        )
+
+        horizon_label = ui.tags.div(
+            ui.tags.span("Periodos a predecir"),
+            horizon_info,
+            style="display:inline-flex; align-items:center; gap:4px;",
+        )
+
         horizon_box = ui.tags.div(
             ui.tags.div(
-                "1) Periodos a predecir",
+                horizon_label,
                 style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
             ),
             ui.input_numeric(
@@ -2162,13 +2179,9 @@ def escenarios_server(input, output, session):
                 max=60,
                 step=1,
             ),
-            ui.tags.span(
-                "Máximo 60 periodos por simulación.",
-                style="display:block; margin-top:6px; font-size:0.85rem; color:#64748b;",
-            ),
             style=(
                 "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
-                "background:#ffffff; margin-bottom:12px;"
+                "background:#ffffff; margin-bottom:0; flex:1 1 320px; min-width:300px;"
             ),
         )
 
@@ -2196,7 +2209,7 @@ def escenarios_server(input, output, session):
         )
 
         model_label = ui.tags.div(
-            ui.tags.span("4) Modelo"),
+            ui.tags.span("Modelo de predicción"),
             xgb_info,
             style="display:inline-flex; align-items:center; gap:4px;",
         )
@@ -2205,6 +2218,10 @@ def escenarios_server(input, output, session):
             ui.tags.div(
                 model_label,
                 style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            ui.tags.span(
+                "Selecciona un modelo de predicción",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
             ),
             ui.input_radio_buttons(
                 "esc_fut_model",
@@ -2259,7 +2276,7 @@ def escenarios_server(input, output, session):
                     ),
                 ),
                 ui.tags.div(
-                    ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
+                    ui.h5("Valores de la predicción", style="margin:0 0 8px 0;"),
                     ui.tags.div(
                         ui.output_ui("esc_fut_table"),
                         style="max-height:420px; overflow:auto;",
@@ -2301,8 +2318,11 @@ def escenarios_server(input, output, session):
                 """
             ),
             intro,
-            horizon_box,
-            ui.output_ui("esc_future_exog_selector"),
+            ui.tags.div(
+                ui.output_ui("esc_future_exog_selector"),
+                horizon_box,
+                style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin-bottom:12px;",
+            ),
             ui.output_ui("esc_future_exog_table"),
             model_box,
             ui.tags.div(status, outputs, id="esc_result_area"),
@@ -2545,11 +2565,11 @@ def escenarios_server(input, output, session):
             return ui.div()
         return ui.tags.div(
             ui.tags.div(
-                "2) Exógenas activas",
+                "Exógenas activas",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
             ),
             ui.tags.p(
-                "Selecciona las exógenas que quieres incluir en el escenario pasado.",
+                "Selecciona las exógenas que quieres incluir en el escenario pasado. Solo las exógenas activas aparecerán en la tabla de valores y se incluirán en el cálculo.",
                 style="color:#475569; margin:0 0 10px 0; line-height:1.5;",
             ),
             ui.input_checkbox_group(
@@ -2565,7 +2585,7 @@ def escenarios_server(input, output, session):
             ),
             style=(
                 "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
-                "background:#ffffff; margin-bottom:12px;"
+                "background:#ffffff; margin-bottom:0; flex:1 1 420px; min-width:320px;"
             ),
         )
 
@@ -2585,7 +2605,7 @@ def escenarios_server(input, output, session):
         if not exogs:
             return ui.tags.div(
                 ui.tags.div(
-                    "3) Valores modificados de exógenas",
+                    "Valores modificados de exógenas",
                     style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
                 ui.tags.span(
@@ -2600,7 +2620,7 @@ def escenarios_server(input, output, session):
         if dates.empty:
             return ui.tags.div(
                 ui.tags.div(
-                    "3) Valores modificados de exógenas",
+                    "Valores modificados de exógenas",
                     style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
                 ui.tags.span("Selecciona un rango de fechas válido para ver la tabla."),
@@ -2614,7 +2634,7 @@ def escenarios_server(input, output, session):
         if h > 60:
             return ui.tags.div(
                 ui.tags.div(
-                    "3) Valores modificados de exógenas",
+                    "Valores modificados de exógenas",
                     style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
                 ),
                 ui.tags.b(f"Rango demasiado amplio ({h} periodos)."),
@@ -2637,7 +2657,7 @@ def escenarios_server(input, output, session):
             header_cells.append(
                 ui.tags.th(
                     ex,
-                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:center; padding:8px 12px; min-width:110px;",
+                    style="position:sticky; top:0; background:#f8fafc; z-index:2; border-bottom:2px solid #e2e8f0; text-align:left; padding:8px 12px; min-width:110px;",
                 )
             )
 
@@ -2675,7 +2695,7 @@ def escenarios_server(input, output, session):
                                 class_="esc-past-num-ghost",
                             ),
                         ),
-                        style="text-align:center; border-bottom:1px solid #e5e7eb; padding:4px 8px;",
+                        style="min-width:120px; padding:8px 12px; border-bottom:1px solid #e5e7eb;",
                     )
                 )
 
@@ -2687,7 +2707,7 @@ def escenarios_server(input, output, session):
                 .esc-past-num-wrap {
                     position: relative;
                     min-width: 100px;
-                    margin: 0 auto;
+                    margin: 0;
                 }
 
                 .esc-past-num-wrap .form-group,
@@ -2759,7 +2779,7 @@ def escenarios_server(input, output, session):
                 """
             ),
             ui.tags.div(
-                "3) Valores modificados de exógenas",
+                "Valores modificados de exógenas",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:4px; color:#1e293b;",
             ),
             ui.tags.span(
@@ -2775,6 +2795,7 @@ def escenarios_server(input, output, session):
                 style=(
                     "overflow:auto; max-width:100%; border:1px solid #d0d7de; "
                     "border-radius:10px; padding:8px;"
+                    + (" max-height:340px;" if h > 5 else "")
                 ),
             ),
             style=(
@@ -3127,7 +3148,7 @@ def escenarios_server(input, output, session):
 
         date_range_box = ui.tags.div(
             ui.tags.div(
-                "1) Rango de fechas a predecir",
+                "Rango de fechas a predecir",
                 style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
             ),
             ui.tags.div(
@@ -3147,7 +3168,7 @@ def escenarios_server(input, output, session):
             ),
             style=(
                 "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
-                "background:#ffffff; margin-bottom:12px;"
+                "background:#ffffff; margin-bottom:0; flex:1 1 320px; min-width:300px;"
             ),
         )
 
@@ -3176,7 +3197,7 @@ def escenarios_server(input, output, session):
         )
 
         model_label_past = ui.tags.div(
-            ui.tags.span("4) Modelo"),
+            ui.tags.span("Modelo de predicción"),
             xgb_info_past,
             style="display:inline-flex; align-items:center; gap:4px;",
         )
@@ -3185,6 +3206,10 @@ def escenarios_server(input, output, session):
             ui.tags.div(
                 model_label_past,
                 style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            ui.tags.span(
+                "Selecciona un modelo de predicción",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
             ),
             ui.input_radio_buttons(
                 "esc_past_model",
@@ -3236,8 +3261,11 @@ def escenarios_server(input, output, session):
                 """
             ),
             intro,
-            date_range_box,
-            ui.output_ui("esc_past_exog_selector"),
+            ui.tags.div(
+                ui.output_ui("esc_past_exog_selector"),
+                date_range_box,
+                style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin-bottom:12px;",
+            ),
             ui.output_ui("esc_past_exog_table"),
             model_box,
             ui.tags.div(

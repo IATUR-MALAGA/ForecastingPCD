@@ -65,7 +65,7 @@ body {
   width: 100%;
   text-align: center;
   background: var(--bg-card);
-  border-radius: 20px;
+  border-radius: 0;
   padding: 3rem 2.5rem;
   box-shadow: var(--shadow-xl);
 }

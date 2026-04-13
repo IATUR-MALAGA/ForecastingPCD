@@ -1263,7 +1263,7 @@ def predicciones_server(input, output, session):
             "MAPE, RMSE y MAE evalúan el error del modelo desde distintas perspectivas."
         )
 
-    def _build_table_html(df: pd.DataFrame) -> ui.Tag:
+    def _build_table_html(df: pd.DataFrame, max_height: int | None = 420) -> ui.Tag:
         header_cells = [
             ui.tags.th(
                 c,
@@ -1283,13 +1283,17 @@ def predicciones_server(input, output, session):
                 )
             rows.append(ui.tags.tr(*cells))
 
+        container_style = "overflow:auto;"
+        if max_height is not None:
+            container_style += f" max-height:{max_height}px;"
+
         return ui.tags.div(
             ui.tags.table(
                 ui.tags.thead(ui.tags.tr(*header_cells)),
                 ui.tags.tbody(*rows),
                 style="border-collapse:collapse; width:100%; font-size:0.9rem;",
             ),
-            style="overflow:auto; max-height:420px;",
+            style=container_style,
         )
 
     def _build_prediction_figure(df, pred, title, ylabel, xlabel, column_y, decimals):
@@ -1582,7 +1586,7 @@ def predicciones_server(input, output, session):
                     "Punto seleccionado",
                     style="font-weight:600; margin-bottom:8px;",
                 ),
-                _build_table_html(detail_df),
+                _build_table_html(detail_df, max_height=None),
             )
 
         df = res["pred_df"].copy()
@@ -1595,7 +1599,7 @@ def predicciones_server(input, output, session):
                 "Haz clic en un punto para ver su detalle.",
                 style="color:#6b7280; font-size:0.9rem; margin-bottom:8px;",
             ),
-            _build_table_html(df),
+            _build_table_html(df, max_height=(340 if len(df) > 5 else None)),
         )
 
     # ------------------------
@@ -1610,6 +1614,107 @@ def predicciones_server(input, output, session):
         choices = exog_choices()
         selected = exog_selected()
         model = selected_model()
+        m = max_preds_available()
+        h = pred_horizon()
+        res = pred_results_rv.get()
+        err = pred_results_err_rv.get()
+        target = target_var_rv.get()
+        target_agg = _target_aggregation_label(target)
+
+        intro = ui.div(
+            ui.tags.div("\U0001f52e", style="font-size:2.5rem; margin-bottom:0.5rem;"),
+            ui.h3(
+                "Configurar predicciones",
+                style="text-align:center; font-size:1.5rem; font-weight:700; margin:0 0 0.5rem 0;",
+            ),
+            ui.tags.p(
+                "Define el horizonte, selecciona exógenas y ejecuta el modelo para generar predicciones.",
+                style="text-align:center; color:#475569; max-width:700px; margin:0 auto 1.5rem; line-height:1.6;",
+            ),
+            style="text-align:center; margin-bottom:1rem;",
+        )
+
+        horizon_info = ui.tooltip(
+            ui.tags.span(
+                ui.HTML(ICON_SVG_INFO),
+                style="margin-left:6px; cursor:pointer;",
+            ),
+            (
+                f"Máximo {m} periodos disponibles con las exógenas activas."
+                if m >= 1
+                else "Selecciona exógenas compatibles para habilitar el horizonte."
+            ),
+        )
+
+        horizon_label = ui.tags.div(
+            ui.tags.span("Periodos a predecir"),
+            horizon_info,
+            style="display:inline-flex; align-items:center; gap:4px;",
+        )
+
+        horizon_control = (
+            ui.input_slider(
+                "pred_horizon",
+                "Valores a predecir",
+                min=1,
+                max=m,
+                value=(h if h >= 1 else 1),
+                step=1,
+            )
+            if m >= 1
+            else ui.tags.div(
+                ui.tags.span(
+                    "Selecciona exógenas compatibles para habilitar el horizonte.",
+                    style="color:#6b7280;",
+                ),
+                style="margin-top:6px;",
+            )
+        )
+
+        horizon_box = ui.tags.div(
+            ui.tags.div(
+                horizon_label,
+                style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
+            ),
+            horizon_control,
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:0; flex:1 1 320px; min-width:300px;"
+            ),
+        )
+
+        exog_selector_box = ui.tags.div(
+            ui.tags.div(
+                "Exógenas activas",
+                style="font-size:1.05rem; font-weight:700; margin-bottom:8px; color:#1e293b;",
+            ),
+            ui.tags.p(
+                "Selecciona las exógenas que quieres incluir en la predicción. Solo las exógenas activas se usarán en el cálculo.",
+                style="color:#475569; margin:0 0 10px 0; line-height:1.5;",
+            ),
+            ui.tags.div(
+                f"Objetivo: {target or '—'} · Agregación automática: {target_agg}",
+                style="color:#64748b; font-size:0.85rem; margin-bottom:8px;",
+            ),
+            (
+                ui.input_checkbox_group(
+                    "model_exogs",
+                    label="",
+                    choices=choices,
+                    selected=selected,
+                    inline=False,
+                )
+                if choices
+                else ui.tags.span(
+                    "No hay exógenas disponibles para esta configuración.",
+                    style="color:#6b7280;",
+                )
+            ),
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:0; flex:1 1 420px; min-width:320px;"
+            ),
+        )
 
         xgb_info = ui.tooltip(
             ui.tags.span(
@@ -1635,7 +1740,7 @@ def predicciones_server(input, output, session):
         )
 
         model_label = ui.tags.div(
-            ui.tags.span("Modelo"),
+            ui.tags.span("Modelo de predicción"),
             xgb_info,
             style="display:inline-flex; align-items:center; gap:4px;",
         )
@@ -1662,182 +1767,131 @@ def predicciones_server(input, output, session):
             """
         )
 
-        m = max_preds_available()
-        h = pred_horizon()
-        res = pred_results_rv.get()
-        target = target_var_rv.get()
-        target_agg = _target_aggregation_label(target)
-
-        # Header (inputs)
-        header = ui.card(
+        model_box = ui.tags.div(
             ui.tags.div(
-                ui.h3(
-                    "Panel 4: Modelo y exógenas", style="margin:0; text-align:center;"
-                ),
-                ui.tags.div(
-                    "Elige el modelo y las exógenas. La predicción SOLO se ejecuta al pulsar el botón.",
-                    style="color:#6b7280; margin-top:4px; text-align:center;",
-                ),
-                ui.tags.div(
-                    f"Objetivo: {target or '—'} · agregación automática: {target_agg}",
-                    style="color:#475569; margin-top:4px; text-align:center; font-size:0.95rem;",
-                ),
-                style="width:100%;",
+                model_label,
+                style="font-size:1.05rem; font-weight:700; margin-bottom:10px; color:#1e293b;",
             ),
-            ui.tags.hr(style="margin:12px 0;"),
-            ui.tags.div(
-                ui.tags.div(
-                    ui.input_radio_buttons(
-                        "model_choice",
-                        model_label,
-                        choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
-                        selected=model,
-                        inline=True,
-                    ),
-                    style="flex: 1 1 260px;",
-                ),
-                ui.tags.div(
-                    ui.input_checkbox_group(
-                        "model_exogs",
-                        "Variables exógenas (activar/desactivar)",
-                        choices=choices,
-                        selected=selected,
-                    ),
-                    style="flex: 2 1 420px;",
-                ),
-                style="display:flex; gap:14px; flex-wrap:wrap; justify-content:center;",
+            ui.tags.span(
+                "Selecciona un modelo de predicción",
+                style="display:block; font-size:0.85rem; color:#64748b; margin-bottom:8px;",
+            ),
+            ui.input_radio_buttons(
+                "model_choice",
+                "",
+                choices={"xgboost": "XGBoost", "sarimax": "SARIMAX"},
+                selected=model,
+                inline=True,
             ),
             ui.tags.div(
-                (
-                    ui.input_slider(
-                        "pred_horizon",
-                        "Valores a predecir",
-                        min=1,
-                        max=m,
-                        value=(h if h >= 1 else 1),
-                        step=1,
-                    )
-                    if m >= 1
-                    else ui.tags.div(
-                        ui.tags.b("Valores a predecir: "),
-                        ui.tags.span(
-                            "— (selecciona exógenas compatibles para habilitar el horizonte)"
-                        ),
-                        style="margin-top: 8px; color:#6b7280; text-align:center;",
-                    )
-                ),
+                ui.input_action_button("calc_pred", "Calcular", class_="btn-primary"),
                 style="margin-top:10px;",
             ),
-            # BOTÓN debajo del slider, centrado
-            ui.tags.div(
-                ui.input_action_button(
-                    "calc_pred", "Calcula predicción", class_="btn-primary"
-                ),
-                style="margin-top: 10px; display:flex; justify-content:center;",
+            style=(
+                "padding:16px; border:1px solid #d0d7de; border-radius:12px; "
+                "background:#ffffff; margin-bottom:12px;"
             ),
-            style="padding: 14px; border-radius: 14px;",
         )
 
         footer = ui.tags.div(
             ui.input_action_button("btn_prev_4", "← Anterior"),
-            style="margin-top: 12px;",
+            style="margin-top:12px; display:flex; gap:8px;",
         )
 
-        # Estado: calculando (spinner se inyecta via insert_ui)
-
-        # Estado sin resultados ni errores
-        err = pred_results_err_rv.get()
-
-        if res is None:
-            status_content = [
-                ui.tags.div(
-                    ui.tags.span("Estado: ", style="font-weight:600;"),
-                    ui.tags.span(
-                        "listo para calcular. Pulsa «Calcula predicción».",
-                        style="color:#6b7280;",
-                    ),
-                    style=(
-                        "margin-top: 10px; padding: 10px 12px; border: 1px dashed #d1d5db; "
-                        "border-radius: 12px; background:#fafafa;"
-                    ),
-                )
-            ]
-
-            return ui.div(
-                PANEL_STYLES,
-                header,
-                ui.tags.div(
-                    *status_content,
-                    id="pred_result_area",
+        status = ui.div()
+        if err:
+            status = ui.tags.div(
+                ui.tags.b("Error: "),
+                ui.tags.span(err),
+                style=(
+                    "margin-top:10px; padding:10px 12px; border:1px solid #fecaca; "
+                    "border-radius:12px; background:#fef2f2; color:#991b1b;"
                 ),
-                footer,
+            )
+        elif res is None:
+            status = ui.tags.div(
+                ui.tags.b("Estado: "),
+                ui.tags.span(
+                    "listo para calcular. Pulsa «Calcular».",
+                    style="color:#6b7280;",
+                ),
+                style=(
+                    "margin-top:10px; padding:10px 12px; border:1px dashed #d1d5db; "
+                    "border-radius:12px; background:#fafafa;"
+                ),
             )
 
         # Resultados
-        mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
+        outputs = ui.div()
+        if res is not None:
+            mape, rmse, mae = res["mape"], res["rmse"], res["mae"]
 
-        kpis = ui.tags.div(
-            _kpi_card("MAPE", fmt_num(mape, 2, "%")),
-            _kpi_card("RMSE", fmt_num(rmse, 2)),
-            _kpi_card("MAE", fmt_num(mae, 2)),
-            style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 10px;",
-        )
+            kpis = ui.tags.div(
+                _kpi_card("MAPE", fmt_num(mape, 2, "%")),
+                _kpi_card("RMSE", fmt_num(rmse, 2)),
+                _kpi_card("MAE", fmt_num(mae, 2)),
+                style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;",
+            )
 
-        kpis_title = ui.tags.div(
-            ui.tags.span("Métricas del modelo", style="font-weight:600;"),
-            _metrics_info_tooltip(),
-            style="display:flex; align-items:center; gap:6px; margin-top:10px;",
-        )
+            kpis_title = ui.tags.div(
+                ui.tags.span("Métricas del modelo", style="font-weight:600;"),
+                _metrics_info_tooltip(),
+                style="display:flex; align-items:center; gap:6px; margin-top:10px;",
+            )
 
-        exogs_line = ui.tags.div(
-            ui.tags.span(
-                "Exógenas activas: ", style="font-weight:600; margin-right:6px;"
-            ),
-            _pill(
-                ", ".join(res["predictors_used"])
-                if res["predictors_used"]
-                else "Ninguna"
-            ),
-            style="margin-top: 10px;",
-        )
+            exogs_line = ui.tags.div(
+                ui.tags.span(
+                    "Exógenas activas: ", style="font-weight:600; margin-right:6px;"
+                ),
+                _pill(
+                    ", ".join(res["predictors_used"])
+                    if res["predictors_used"]
+                    else "Ninguna"
+                ),
+                style="margin-top:10px;",
+            )
 
-        # Layout plot + tabla (responsive)
-        body = ui.tags.div(
-            ui.card(
-                ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
-                ui.output_ui("model_plot"),
+            body = ui.tags.div(
+                ui.tags.div(
+                    ui.h5("Evolución temporal", style="margin:0 0 8px 0;"),
+                    ui.output_ui("model_plot"),
+                    style=(
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:2 1 640px; min-width:520px;"
+                    ),
+                ),
+                ui.tags.div(
+                    ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
+                    ui.tags.div(
+                        ui.output_ui("pred_table"),
+                        style="max-height:420px; overflow:auto;",
+                    ),
+                    style=(
+                        "padding:12px; border:1px solid #d0d7de; border-radius:12px; "
+                        "background:#ffffff; flex:1 1 420px; min-width:340px;"
+                    ),
+                ),
                 style=(
-                    "padding: 12px; border-radius: 14px;"
-                    "flex: 2 1 640px; min-width: 520px;"
+                    "display:flex; gap:12px; flex-wrap:wrap; "
+                    "align-items:flex-start; margin-top:12px;"
                 ),
-            ),
-            ui.card(
-                ui.h5("Detalle / valores predichos", style="margin:0 0 8px 0;"),
-                ui.tags.div(  # wrapper para controlar altura/scroll si crece
-                    ui.output_ui("pred_table"),
-                    style="max-height: 420px; overflow:auto;",
-                ),
-                style=(
-                    "padding: 12px; border-radius: 14px;"
-                    "flex: 1 1 420px; min-width: 340px;"
-                ),
-            ),
-            style=(
-                "display:flex; gap:12px; flex-wrap:wrap;"
-                "align-items:flex-start;"  # <- evita que la tabla se estire en alto
-                "margin-top: 12px;"
-            ),
-        )
+            )
+
+            outputs = ui.tags.div(exogs_line, kpis_title, kpis, body)
 
         return ui.div(
             PANEL_STYLES,
             xgb_tooltip_style,
-            header,
+            intro,
             ui.tags.div(
-                exogs_line,
-                kpis_title,
-                kpis,
-                body,
+                exog_selector_box,
+                horizon_box,
+                style="display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin-bottom:12px;",
+            ),
+            model_box,
+            ui.tags.div(
+                status,
+                outputs,
                 id="pred_result_area",
             ),
             footer,
